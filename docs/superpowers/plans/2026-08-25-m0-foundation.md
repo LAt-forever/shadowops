@@ -292,9 +292,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     http_host: str = "127.0.0.1"
     http_port: int = 8000
-    database_url: str = (
-        "postgresql+psycopg://shadowops:shadowops@control-postgres:5432/shadowops"
-    )
+    database_url: str = "postgresql+psycopg://shadowops:shadowops@control-postgres:5432/shadowops"
     redis_url: str = "redis://redis:6379/0"
     postgres_major: int = 16
     log_level: str = "INFO"
@@ -782,8 +780,7 @@ Then update `src/shadowops/api/app.py` so the default factory creates a SQLAlche
 The resulting factory signature remains:
 
 ```python
-def create_app(readiness_service: ReadinessService | None = None) -> FastAPI:
-    ...
+def create_app(readiness_service: ReadinessService | None = None) -> FastAPI: ...
 ```
 
 When `readiness_service is None`, construct:
@@ -1349,6 +1346,7 @@ git commit -m "build: add local control-plane services"
 - Create: `.github/workflows/ci.yml`
 - Modify: `README.md`
 - Create: `docs/development.md`
+- Create: `docs/handoffs/M0.md`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 
