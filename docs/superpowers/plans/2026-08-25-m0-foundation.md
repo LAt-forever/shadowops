@@ -157,14 +157,14 @@ Expected: uv creates `.venv` and `uv.lock` and installs the dev group without er
 
 - [ ] **Step 2: Write the failing package version test**
 
-Create `tests/unit/test_package.py`:
+Create a behavior-free `src/shadowops/__init__.py` containing only a package docstring so pytest can collect the test. Create `tests/unit/test_package.py`:
 
 ```python
-from shadowops import __version__
+import shadowops
 
 
 def test_package_exposes_initial_version() -> None:
-    assert __version__ == "0.1.0"
+    assert getattr(shadowops, "__version__", None) == "0.1.0"
 ```
 
 - [ ] **Step 3: Run the test and verify RED**
@@ -175,13 +175,15 @@ Run:
 uv run pytest tests/unit/test_package.py -v
 ```
 
-Expected: FAIL during import because `src/shadowops/__init__.py` does not exist.
+Expected: FAIL with `AssertionError` because `shadowops.__version__` is absent.
 
 - [ ] **Step 4: Add the minimal package implementation**
 
-Create `src/shadowops/__init__.py`:
+Replace `src/shadowops/__init__.py` with:
 
 ```python
+"""ShadowOps package."""
+
 __version__ = "0.1.0"
 ```
 
