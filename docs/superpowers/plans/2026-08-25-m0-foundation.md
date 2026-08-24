@@ -530,20 +530,25 @@ Run:
 
 ```bash
 uv add fastapi 'uvicorn[standard]' httpx
+uv add --dev httpx2
 ```
+
+`httpx2` is a development-only dependency required by Starlette 1.6 TestClient; runtime CLI HTTP remains on `httpx`.
 
 - [ ] **Step 2: Write failing API health tests**
 
-Create `tests/unit/api/test_health.py`:
+Create behavior-free module docstrings in `src/shadowops/api/__init__.py`, `src/shadowops/api/app.py`, `src/shadowops/api/routes/__init__.py`, and `src/shadowops/api/routes/health.py`. Create `tests/unit/api/test_health.py`:
 
 ```python
 from fastapi.testclient import TestClient
 
-from shadowops.api.app import create_app
+import shadowops.api.app as api_app
 from shadowops.application.readiness import ReadinessService
 
 
 def test_liveness_does_not_depend_on_external_services() -> None:
+    create_app = getattr(api_app, "create_app", None)
+    assert create_app is not None
     client = TestClient(create_app(ReadinessService({})))
 
     response = client.get("/health/live")
@@ -556,6 +561,8 @@ def test_readiness_returns_503_with_dependency_status() -> None:
     def fail() -> None:
         raise ConnectionError("offline")
 
+    create_app = getattr(api_app, "create_app", None)
+    assert create_app is not None
     client = TestClient(create_app(ReadinessService({"database": fail})))
 
     response = client.get("/health/ready")
@@ -575,15 +582,17 @@ Run:
 uv run pytest tests/unit/api/test_health.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.api`.
+Expected: two assertion failures because `create_app` is absent.
 
 - [ ] **Step 4: Implement the health router and application factory**
 
-Create empty `__init__.py` files under `src/shadowops/api/` and `src/shadowops/api/routes/`.
+Keep the API package docstrings.
 
 Create `src/shadowops/api/routes/health.py`:
 
 ```python
+"""Service health routes."""
+
 from fastapi import APIRouter, Request, Response, status
 
 from shadowops.application.readiness import ReadinessService
@@ -611,6 +620,8 @@ def ready(request: Request, response: Response) -> dict[str, object]:
 Create `src/shadowops/api/app.py`:
 
 ```python
+"""FastAPI application factory."""
+
 from fastapi import FastAPI
 
 from shadowops.api.routes.health import router as health_router
