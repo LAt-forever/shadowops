@@ -419,14 +419,16 @@ git commit -m "feat: add typed settings and structured logging"
 
 - [ ] **Step 1: Write failing readiness tests**
 
-Create `tests/unit/application/test_readiness.py`:
+Create behavior-free module docstrings in `src/shadowops/application/__init__.py` and `src/shadowops/application/readiness.py`. Create `tests/unit/application/test_readiness.py`:
 
 ```python
-from shadowops.application.readiness import ReadinessService
+import shadowops.application.readiness as readiness
 
 
 def test_readiness_is_ready_when_all_checks_succeed() -> None:
-    result = ReadinessService({"database": lambda: None, "redis": lambda: None}).run()
+    service_type = getattr(readiness, "ReadinessService", None)
+    assert service_type is not None
+    result = service_type({"database": lambda: None, "redis": lambda: None}).run()
 
     assert result.ready is True
     assert result.dependencies == {"database": "ok", "redis": "ok"}
@@ -436,7 +438,9 @@ def test_readiness_reports_each_failed_dependency() -> None:
     def fail() -> None:
         raise ConnectionError("offline")
 
-    result = ReadinessService({"database": fail, "redis": lambda: None}).run()
+    service_type = getattr(readiness, "ReadinessService", None)
+    assert service_type is not None
+    result = service_type({"database": fail, "redis": lambda: None}).run()
 
     assert result.ready is False
     assert result.dependencies == {"database": "unavailable", "redis": "ok"}
@@ -450,13 +454,15 @@ Run:
 uv run pytest tests/unit/application/test_readiness.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.application`.
+Expected: two assertion failures because `ReadinessService` is absent.
 
 - [ ] **Step 3: Implement readiness aggregation**
 
-Create an empty `src/shadowops/application/__init__.py` and create `src/shadowops/application/readiness.py`:
+Keep the application package docstring and replace `src/shadowops/application/readiness.py` with:
 
 ```python
+"""Dependency readiness aggregation."""
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
