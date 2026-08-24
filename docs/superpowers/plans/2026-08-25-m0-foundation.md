@@ -232,14 +232,16 @@ Expected: `pyproject.toml` and `uv.lock` contain resolved compatible dependencie
 
 - [ ] **Step 2: Write failing settings tests**
 
-Create `tests/unit/test_config.py`:
+Create a behavior-free `src/shadowops/config.py` containing only a module docstring. Create `tests/unit/test_config.py`:
 
 ```python
-from shadowops.config import Settings
+import shadowops.config as config
 
 
 def test_settings_use_safe_local_defaults() -> None:
-    settings = Settings(_env_file=None)
+    settings_type = getattr(config, "Settings", None)
+    assert settings_type is not None
+    settings = settings_type(_env_file=None)
 
     assert settings.app_name == "ShadowOps"
     assert settings.environment == "development"
@@ -250,8 +252,9 @@ def test_settings_use_safe_local_defaults() -> None:
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:
     monkeypatch.setenv("SHADOWOPS_HTTP_PORT", "8123")
-
-    settings = Settings(_env_file=None)
+    settings_type = getattr(config, "Settings", None)
+    assert settings_type is not None
+    settings = settings_type(_env_file=None)
 
     assert settings.http_port == 8123
 ```
@@ -264,13 +267,15 @@ Run:
 uv run pytest tests/unit/test_config.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'shadowops.config'`.
+Expected: two assertion failures because `shadowops.config.Settings` is absent.
 
 - [ ] **Step 4: Implement the minimal settings model**
 
-Create `src/shadowops/config.py`:
+Replace `src/shadowops/config.py` with:
 
 ```python
+"""Application configuration."""
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -324,17 +329,19 @@ Expected: two tests pass.
 
 - [ ] **Step 6: Write the failing JSON logging test**
 
-Create `tests/unit/observability/test_logging.py`:
+Create behavior-free module docstrings in `src/shadowops/observability/__init__.py` and `src/shadowops/observability/logging.py`. Create `tests/unit/observability/test_logging.py`:
 
 ```python
 import json
 
 import structlog
 
-from shadowops.observability.logging import configure_logging
+import shadowops.observability.logging as logging_config
 
 
 def test_configured_logger_emits_json(capsys) -> None:
+    configure_logging = getattr(logging_config, "configure_logging", None)
+    assert configure_logging is not None
     configure_logging("INFO")
 
     structlog.get_logger().info("service_started", service="api")
@@ -353,13 +360,15 @@ Run:
 uv run pytest tests/unit/observability/test_logging.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.observability`.
+Expected: FAIL with `AssertionError` because `configure_logging` is absent.
 
 - [ ] **Step 8: Implement minimal structured logging**
 
-Create an empty `src/shadowops/observability/__init__.py` and create `src/shadowops/observability/logging.py`:
+Keep the package docstring in `src/shadowops/observability/__init__.py` and replace `src/shadowops/observability/logging.py` with:
 
 ```python
+"""Structured logging configuration."""
+
 import logging
 import sys
 
