@@ -683,35 +683,44 @@ uv add 'sqlalchemy>=2,<3' 'psycopg[binary]>=3,<4' alembic redis
 
 - [ ] **Step 2: Write failing adapter tests using real adapter behavior at the client boundary**
 
-Create `tests/unit/infrastructure/test_health.py`:
+Create behavior-free module docstrings in `src/shadowops/infrastructure/__init__.py` and `src/shadowops/infrastructure/health.py`. Create `tests/unit/infrastructure/test_health.py`:
 
 ```python
-from unittest.mock import Mock
+import pytest
+from sqlalchemy import create_engine
 
-from shadowops.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
-
-
-def test_database_health_executes_select_one() -> None:
-    connection = Mock()
-    context_manager = Mock()
-    context_manager.__enter__ = Mock(return_value=connection)
-    context_manager.__exit__ = Mock(return_value=False)
-    engine = Mock()
-    engine.connect.return_value = context_manager
-
-    DatabaseHealthCheck(engine)()
-
-    statement = connection.execute.call_args.args[0]
-    assert str(statement) == "SELECT 1"
+import shadowops.infrastructure.health as health
 
 
-def test_redis_health_requires_successful_ping() -> None:
-    client = Mock()
-    client.ping.return_value = True
+def test_database_health_succeeds_when_database_accepts_query() -> None:
+    check_type = getattr(health, "DatabaseHealthCheck", None)
+    assert check_type is not None
+    engine = create_engine("sqlite+pysqlite:///:memory:")
 
-    RedisHealthCheck(client)()
+    check_type(engine)()
 
-    client.ping.assert_called_once_with()
+
+class RedisClient:
+    def __init__(self, response: bool) -> None:
+        self._response = response
+
+    def ping(self) -> bool:
+        return self._response
+
+
+def test_redis_health_succeeds_for_true_ping() -> None:
+    check_type = getattr(health, "RedisHealthCheck", None)
+    assert check_type is not None
+
+    check_type(RedisClient(True))()
+
+
+def test_redis_health_rejects_non_true_ping() -> None:
+    check_type = getattr(health, "RedisHealthCheck", None)
+    assert check_type is not None
+
+    with pytest.raises(ConnectionError, match="non-true"):
+        check_type(RedisClient(False))()
 ```
 
 - [ ] **Step 3: Verify adapter tests fail for the missing module**
@@ -722,13 +731,15 @@ Run:
 uv run pytest tests/unit/infrastructure/test_health.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.infrastructure`.
+Expected: three assertion failures because both health-check classes are absent.
 
 - [ ] **Step 4: Implement minimal health adapters**
 
-Create an empty `src/shadowops/infrastructure/__init__.py` and create `src/shadowops/infrastructure/health.py`:
+Keep the infrastructure package docstring and replace `src/shadowops/infrastructure/health.py` with:
 
 ```python
+"""External dependency health checks."""
+
 from typing import Any
 
 from sqlalchemy import Engine, text
@@ -760,11 +771,13 @@ Run:
 uv run pytest tests/unit/infrastructure/test_health.py -v
 ```
 
-Expected: two tests pass.
+Expected: three tests pass.
 
 - [ ] **Step 6: Wire real checks into the default FastAPI application**
 
-Update `src/shadowops/api/app.py` so the default factory creates a SQLAlchemy engine and Redis client from `get_settings()`, then passes `DatabaseHealthCheck` and `RedisHealthCheck` into `ReadinessService`. Preserve explicit injection in unit tests.
+Before implementation, add `test_default_readiness_checks_database_and_redis` to `tests/unit/api/test_health.py`. Replace only the external engine and Redis client factories with an in-memory SQLite engine and a true-ping Redis fake, call the real `/health/ready` route, and assert both dependency keys are `ok`. Run the single test and confirm it fails because the current default application returns an empty dependency map.
+
+Then update `src/shadowops/api/app.py` so the default factory creates a SQLAlchemy engine and Redis client from `get_settings()`, then passes `DatabaseHealthCheck` and `RedisHealthCheck` into `ReadinessService`. Preserve explicit injection in unit tests.
 
 The resulting factory signature remains:
 

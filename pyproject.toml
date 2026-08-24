@@ -9,9 +9,13 @@ description = "AI-assisted safety auditing for PostgreSQL Alembic migrations"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.19.1",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
+    "psycopg[binary]>=3,<4",
     "pydantic-settings>=2.15.0",
+    "redis>=8.1.0",
+    "sqlalchemy>=2,<3",
     "structlog>=26.1.0",
     "uvicorn[standard]>=0.52.4",
 ]
@@ -32,7 +36,7 @@ dev = [
 packages = ["src/shadowops"]
 
 [tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
 testpaths = ["tests"]
 
 [tool.ruff]
