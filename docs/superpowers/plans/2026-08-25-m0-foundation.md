@@ -296,6 +296,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     postgres_major: int = 16
     log_level: str = "INFO"
+    health_connect_timeout_seconds: int = 2
+    health_read_timeout_seconds: float = 2.0
+    health_pool_timeout_seconds: float = 2.0
+    health_statement_timeout_ms: int = 2_000
 
 
 @lru_cache
@@ -313,6 +317,10 @@ SHADOWOPS_DATABASE_URL=postgresql+psycopg://shadowops:shadowops@control-postgres
 SHADOWOPS_REDIS_URL=redis://redis:6379/0
 SHADOWOPS_POSTGRES_MAJOR=16
 SHADOWOPS_LOG_LEVEL=INFO
+SHADOWOPS_HEALTH_CONNECT_TIMEOUT_SECONDS=2
+SHADOWOPS_HEALTH_READ_TIMEOUT_SECONDS=2.0
+SHADOWOPS_HEALTH_POOL_TIMEOUT_SECONDS=2.0
+SHADOWOPS_HEALTH_STATEMENT_TIMEOUT_MS=2000
 ```
 
 - [ ] **Step 5: Verify settings tests pass**
@@ -374,17 +382,35 @@ import structlog
 
 
 def configure_logging(level: str) -> None:
-    logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level, force=True)
+    shared_processors = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+    ]
     structlog.configure(
         processors=[
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
-            structlog.processors.JSONRenderer(),
+            structlog.contextvars.merge_contextvars,
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=False,
     )
+
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(level.upper())
 ```
 
 - [ ] **Step 9: Verify Task 2 tests and full unit suite pass**
@@ -787,8 +813,20 @@ When `readiness_service is None`, construct:
 
 ```python
 settings = get_settings()
-engine = create_engine(settings.database_url, pool_pre_ping=True)
-redis_client = redis.from_url(settings.redis_url)
+engine = create_engine(
+    settings.database_url,
+    connect_args={
+        "connect_timeout": settings.health_connect_timeout_seconds,
+        "options": f"-c statement_timeout={settings.health_statement_timeout_ms}",
+    },
+    pool_pre_ping=True,
+    pool_timeout=settings.health_pool_timeout_seconds,
+)
+redis_client = redis.from_url(
+    settings.redis_url,
+    socket_connect_timeout=settings.health_connect_timeout_seconds,
+    socket_timeout=settings.health_read_timeout_seconds,
+)
 readiness_service = ReadinessService(
     {
         "database": DatabaseHealthCheck(engine),
@@ -930,6 +968,8 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.accept_content == ["json"]
     assert application.conf.task_acks_late is True
     assert application.conf.broker_connection_retry_on_startup is True
+    assert application.conf.worker_hijack_root_logger is False
+    assert application.conf.worker_cancel_long_running_tasks_on_connection_loss is True
 ```
 
 - [ ] **Step 3: Verify the test fails because the scaffold has no Celery behavior**
@@ -964,6 +1004,8 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         timezone="UTC",
         enable_utc=True,
         broker_connection_retry_on_startup=True,
+        worker_hijack_root_logger=False,
+        worker_cancel_long_running_tasks_on_connection_loss=True,
     )
     return application
 
@@ -1261,6 +1303,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A shadowops.worker.celery_app:celery_app inspect ping --destination celery@$$HOSTNAME --timeout=2 | grep -q pong
+      interval: 5s
+      timeout: 4s
+      retries: 10
+      start_period: 5s
 
 volumes:
   control-postgres-data:
@@ -1297,7 +1347,7 @@ Run:
 docker compose up --build --detach --wait
 ```
 
-Expected: all four services start; API, PostgreSQL, and Redis health checks report healthy; worker remains running.
+Expected: all four services start; API, worker, PostgreSQL, and Redis health checks report healthy.
 
 - [ ] **Step 8: Apply the control-plane migration**
 
@@ -1318,7 +1368,7 @@ Run:
 uv run pytest tests/integration/test_service_health.py -v
 ```
 
-Expected: one integration test passes.
+Expected: six integration cases pass, including independent PostgreSQL/Redis outage and recovery, worker broker roundtrip/non-root execution, and parseable API JSON logs.
 
 - [ ] **Step 10: Verify service logs and tear down cleanly**
 

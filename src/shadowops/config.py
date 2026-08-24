@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     postgres_major: int = 16
     log_level: str = "INFO"
+    health_connect_timeout_seconds: int = 2
+    health_read_timeout_seconds: float = 2.0
+    health_pool_timeout_seconds: float = 2.0
+    health_statement_timeout_ms: int = 2_000
 
 
 @lru_cache

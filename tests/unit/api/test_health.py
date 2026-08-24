@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -35,21 +36,41 @@ def test_readiness_returns_503_with_dependency_status() -> None:
     }
 
 
+def test_api_factory_emits_structured_runtime_log(capsys) -> None:
+    api_app.create_app(ReadinessService({}))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["event"] == "service_configured"
+    assert payload["service"] == "api"
+    assert payload["version"] == "0.1.0"
+
+
 def test_default_readiness_checks_database_and_redis(monkeypatch) -> None:
+    database_options: dict[str, object] = {}
+    redis_options: dict[str, object] = {}
+
     class RedisClient:
         def ping(self) -> bool:
             return True
 
+    def engine_factory(*args, **kwargs):
+        database_options.update(kwargs)
+        return create_engine("sqlite+pysqlite:///:memory:")
+
+    def redis_factory(*args, **kwargs) -> RedisClient:
+        redis_options.update(kwargs)
+        return RedisClient()
+
     monkeypatch.setattr(
         api_app,
         "create_engine",
-        lambda *args, **kwargs: create_engine("sqlite+pysqlite:///:memory:"),
+        engine_factory,
         raising=False,
     )
     monkeypatch.setattr(
         api_app,
         "redis",
-        SimpleNamespace(from_url=lambda *args, **kwargs: RedisClient()),
+        SimpleNamespace(from_url=redis_factory),
         raising=False,
     )
 
@@ -60,3 +81,43 @@ def test_default_readiness_checks_database_and_redis(monkeypatch) -> None:
         "status": "ready",
         "dependencies": {"database": "ok", "redis": "ok"},
     }
+    assert database_options == {
+        "connect_args": {
+            "connect_timeout": 2,
+            "options": "-c statement_timeout=2000",
+        },
+        "pool_pre_ping": True,
+        "pool_timeout": 2.0,
+    }
+    assert redis_options == {
+        "socket_connect_timeout": 2,
+        "socket_timeout": 2.0,
+    }
+
+
+def test_default_dependency_clients_close_on_shutdown(monkeypatch) -> None:
+    closed = {"database": False, "redis": False}
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+
+    def dispose() -> None:
+        closed["database"] = True
+
+    class RedisClient:
+        def ping(self) -> bool:
+            return True
+
+        def close(self) -> None:
+            closed["redis"] = True
+
+    monkeypatch.setattr(engine, "dispose", dispose)
+    monkeypatch.setattr(api_app, "create_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr(
+        api_app,
+        "redis",
+        SimpleNamespace(from_url=lambda *args, **kwargs: RedisClient()),
+    )
+
+    with TestClient(api_app.create_app()):
+        pass
+
+    assert closed == {"database": True, "redis": True}

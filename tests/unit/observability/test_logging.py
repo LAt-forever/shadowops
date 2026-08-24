@@ -1,4 +1,5 @@
 import json
+import logging
 
 import structlog
 
@@ -15,4 +16,15 @@ def test_configured_logger_emits_json(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["event"] == "service_started"
     assert payload["service"] == "api"
+    assert payload["level"] == "info"
+
+
+def test_standard_library_logger_emits_json(capsys) -> None:
+    logging_config.configure_logging("INFO")
+
+    logging.getLogger("uvicorn.error").info("server_started")
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["event"] == "server_started"
+    assert payload["logger"] == "uvicorn.error"
     assert payload["level"] == "info"

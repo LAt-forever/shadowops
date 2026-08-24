@@ -1,11 +1,47 @@
+import json
 import subprocess
+import time
+from pathlib import Path
 
 import httpx
+import pytest
+
+PROJECT_ROOT = Path(__file__).parents[2]
+
+
+def _run(*command: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        cwd=PROJECT_ROOT,
+        text=True,
+    )
+
+
+def _compose(*arguments: str) -> subprocess.CompletedProcess[str]:
+    return _run("docker", "compose", *arguments)
+
+
+def _readiness() -> httpx.Response:
+    with httpx.Client(trust_env=False) as client:
+        return client.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
+
+
+def _wait_until_ready(timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if _readiness().status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.2)
+    raise AssertionError("API did not return to ready state before timeout")
 
 
 def test_compose_api_reports_database_and_redis_ready() -> None:
-    with httpx.Client(trust_env=False) as client:
-        response = client.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
+    response = _readiness()
 
     assert response.status_code == 200
     assert response.json() == {
@@ -15,11 +51,66 @@ def test_compose_api_reports_database_and_redis_ready() -> None:
 
 
 def test_worker_runs_as_non_root_user() -> None:
-    result = subprocess.run(
-        ["docker", "compose", "exec", "-T", "worker", "id", "-u"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    result = _compose("exec", "-T", "worker", "id", "-u")
 
     assert result.stdout.strip() != "0"
+
+
+def test_worker_healthcheck_verifies_broker_roundtrip() -> None:
+    container_id = _compose("ps", "--quiet", "worker").stdout.strip()
+    result = _run(
+        "docker",
+        "inspect",
+        "--format={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}",
+        container_id,
+    )
+
+    assert result.stdout.strip() == "healthy"
+    ping = _compose(
+        "exec",
+        "-T",
+        "worker",
+        "celery",
+        "-A",
+        "shadowops.worker.celery_app:celery_app",
+        "inspect",
+        "ping",
+        "--timeout=5",
+    )
+    assert "pong" in ping.stdout
+
+
+@pytest.mark.parametrize(
+    ("service", "failed_dependency"),
+    [("control-postgres", "database"), ("redis", "redis")],
+)
+def test_readiness_identifies_real_dependency_outage(
+    service: str,
+    failed_dependency: str,
+) -> None:
+    _compose("stop", service)
+    started = time.monotonic()
+    try:
+        response = _readiness()
+        elapsed = time.monotonic() - started
+
+        expected_dependencies = {"database": "ok", "redis": "ok"}
+        expected_dependencies[failed_dependency] = "unavailable"
+        assert elapsed < 5.0
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "not_ready",
+            "dependencies": expected_dependencies,
+        }
+    finally:
+        _compose("start", service)
+        _wait_until_ready()
+
+
+def test_api_runtime_logs_are_json() -> None:
+    _readiness()
+    result = _compose("logs", "--no-color", "--no-log-prefix", "api")
+    log_lines = [line for line in result.stdout.splitlines() if line]
+
+    assert log_lines
+    assert all(isinstance(json.loads(line), dict) for line in log_lines)

@@ -11,6 +11,10 @@ def test_settings_use_safe_local_defaults() -> None:
     assert settings.http_host == "127.0.0.1"
     assert settings.http_port == 8000
     assert settings.postgres_major == 16
+    assert settings.health_connect_timeout_seconds == 2
+    assert settings.health_read_timeout_seconds == 2.0
+    assert settings.health_pool_timeout_seconds == 2.0
+    assert settings.health_statement_timeout_ms == 2_000
 
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:
