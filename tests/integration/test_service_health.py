@@ -40,6 +40,40 @@ def _wait_until_ready(timeout: float = 10.0) -> None:
     raise AssertionError("API did not return to ready state before timeout")
 
 
+def _celery_ping() -> subprocess.CompletedProcess[str]:
+    return _compose(
+        "exec",
+        "-T",
+        "worker",
+        "celery",
+        "-A",
+        "shadowops.worker.celery_app:celery_app",
+        "inspect",
+        "ping",
+        "--timeout=5",
+    )
+
+
+def _wait_until_worker_recovers(timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    container_id = _compose("ps", "--quiet", "worker").stdout.strip()
+    while time.monotonic() < deadline:
+        health = _run(
+            "docker",
+            "inspect",
+            "--format={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}",
+            container_id,
+        ).stdout.strip()
+        if health == "healthy":
+            try:
+                if "pong" in _celery_ping().stdout:
+                    return
+            except subprocess.CalledProcessError:
+                pass
+        time.sleep(0.5)
+    raise AssertionError("Celery worker did not recover its broker roundtrip before timeout")
+
+
 def test_compose_api_reports_database_and_redis_ready() -> None:
     response = _readiness()
 
@@ -66,17 +100,7 @@ def test_worker_healthcheck_verifies_broker_roundtrip() -> None:
     )
 
     assert result.stdout.strip() == "healthy"
-    ping = _compose(
-        "exec",
-        "-T",
-        "worker",
-        "celery",
-        "-A",
-        "shadowops.worker.celery_app:celery_app",
-        "inspect",
-        "ping",
-        "--timeout=5",
-    )
+    ping = _celery_ping()
     assert "pong" in ping.stdout
 
 
@@ -105,6 +129,8 @@ def test_readiness_identifies_real_dependency_outage(
     finally:
         _compose("start", service)
         _wait_until_ready()
+        if service == "redis":
+            _wait_until_worker_recovers()
 
 
 def test_api_runtime_logs_are_json() -> None:

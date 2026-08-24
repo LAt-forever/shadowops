@@ -11,6 +11,7 @@ def configure_logging(level: str) -> None:
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.format_exc_info,
     ]
     structlog.configure(
         processors=[
