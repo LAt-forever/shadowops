@@ -20,7 +20,20 @@ def test_ping_reports_ready_api(monkeypatch) -> None:
         def json(self) -> dict[str, str]:
             return {"status": "ready"}
 
-    monkeypatch.setattr("shadowops.cli.app.httpx.get", lambda *args, **kwargs: Response())
+    class Client:
+        def __init__(self, *, trust_env: bool) -> None:
+            assert trust_env is False
+
+        def __enter__(self) -> "Client":
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, *args, **kwargs) -> Response:
+            return Response()
+
+    monkeypatch.setattr("shadowops.cli.app.httpx.Client", Client)
 
     result = runner.invoke(app, ["ping", "--api-url", "http://127.0.0.1:8000"])
 

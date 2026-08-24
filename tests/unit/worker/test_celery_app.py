@@ -15,3 +15,4 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.worker_prefetch_multiplier == 1
     assert application.conf.timezone == "UTC"
     assert application.conf.enable_utc is True
+    assert application.conf.broker_connection_retry_on_startup is True

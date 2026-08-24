@@ -19,6 +19,7 @@ def ping(
     api_url: str = typer.Option("http://127.0.0.1:8000", help="ShadowOps API base URL"),
 ) -> None:
     """Report the API readiness status."""
-    response = httpx.get(f"{api_url.rstrip('/')}/health/ready", timeout=5.0)
+    with httpx.Client(trust_env=False) as client:
+        response = client.get(f"{api_url.rstrip('/')}/health/ready", timeout=5.0)
     response.raise_for_status()
     typer.echo(response.json()["status"])

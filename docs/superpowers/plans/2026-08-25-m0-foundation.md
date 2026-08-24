@@ -932,6 +932,7 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.task_serializer == "json"
     assert application.conf.accept_content == ["json"]
     assert application.conf.task_acks_late is True
+    assert application.conf.broker_connection_retry_on_startup is True
 ```
 
 - [ ] **Step 3: Verify the test fails because the scaffold has no Celery behavior**
@@ -965,6 +966,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         worker_prefetch_multiplier=1,
         timezone="UTC",
         enable_utc=True,
+        broker_connection_retry_on_startup=True,
     )
     return application
 
@@ -1061,6 +1063,8 @@ Expected: both tests are collected and FAIL because `version` and `ping` are not
 Create an empty `src/shadowops/cli/__init__.py` and create `src/shadowops/cli/app.py`:
 
 ```python
+import subprocess
+
 import httpx
 import typer
 
@@ -1078,7 +1082,8 @@ def version() -> None:
 def ping(
     api_url: str = typer.Option("http://127.0.0.1:8000", help="ShadowOps API base URL"),
 ) -> None:
-    response = httpx.get(f"{api_url.rstrip('/')}/health/ready", timeout=5.0)
+    with httpx.Client(trust_env=False) as client:
+        response = client.get(f"{api_url.rstrip('/')}/health/ready", timeout=5.0)
     response.raise_for_status()
     typer.echo(response.json()["status"])
 ```
@@ -1122,13 +1127,25 @@ import httpx
 
 
 def test_compose_api_reports_database_and_redis_ready() -> None:
-    response = httpx.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
+    with httpx.Client(trust_env=False) as client:
+        response = client.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
 
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
         "dependencies": {"database": "ok", "redis": "ok"},
     }
+
+
+def test_worker_runs_as_non_root_user() -> None:
+    result = subprocess.run(
+        ["docker", "compose", "exec", "-T", "worker", "id", "-u"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() != "0"
 ```
 
 - [ ] **Step 2: Verify integration test fails before Compose exists**

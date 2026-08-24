@@ -1,0 +1,67 @@
+name: shadowops
+
+services:
+  control-postgres:
+    image: postgres:16@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+    environment:
+      POSTGRES_DB: shadowops
+      POSTGRES_USER: shadowops
+      POSTGRES_PASSWORD: shadowops
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shadowops -d shadowops"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - control-postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["uvicorn", "shadowops.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: &shadowops-environment
+      SHADOWOPS_DATABASE_URL: postgresql+psycopg://shadowops:shadowops@control-postgres:5432/shadowops
+      SHADOWOPS_REDIS_URL: redis://redis:6379/0
+      SHADOWOPS_POSTGRES_MAJOR: "16"
+      SHADOWOPS_LOG_LEVEL: INFO
+    depends_on:
+      control-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["celery", "-A", "shadowops.worker.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    environment: *shadowops-environment
+    depends_on:
+      control-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  control-postgres-data:
