@@ -57,7 +57,7 @@ docs/development.md                    M0 setup and verification commands
 **Files:**
 - Create: `pyproject.toml`
 - Create: `.python-version`
-- Create: `.gitignore`
+- Modify: `.gitignore`
 - Create: `README.md`
 - Create: `src/shadowops/__init__.py`
 - Create: `tests/unit/test_package.py`
@@ -74,7 +74,7 @@ Create `.python-version`:
 3.12
 ```
 
-Create `.gitignore`:
+Replace `.gitignore` with the complete development ignore set:
 
 ```gitignore
 .DS_Store
