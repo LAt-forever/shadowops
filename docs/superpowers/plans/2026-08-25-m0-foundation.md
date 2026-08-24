@@ -913,7 +913,7 @@ Run:
 uv add 'celery[redis]'
 ```
 
-- [ ] **Step 2: Write the failing Celery configuration test**
+- [ ] **Step 2: Add an importable no-behavior worker scaffold and write the failing configuration test**
 
 Create `tests/unit/worker/test_celery_app.py`:
 
@@ -934,7 +934,7 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.task_acks_late is True
 ```
 
-- [ ] **Step 3: Verify the test fails for the missing worker module**
+- [ ] **Step 3: Verify the test fails because the scaffold has no Celery behavior**
 
 Run:
 
@@ -942,7 +942,7 @@ Run:
 uv run pytest tests/unit/worker/test_celery_app.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.worker`.
+Expected: the test is collected and FAILS because the scaffold does not return a configured Celery app. A collection error does not count as a valid RED.
 
 - [ ] **Step 4: Implement minimal Celery configuration**
 
