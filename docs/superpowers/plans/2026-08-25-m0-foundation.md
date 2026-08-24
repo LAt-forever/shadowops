@@ -1011,7 +1011,7 @@ Run:
 uv add typer
 ```
 
-- [ ] **Step 2: Write failing CLI tests**
+- [ ] **Step 2: Add an importable command-free CLI scaffold and write failing CLI tests**
 
 Create `tests/unit/cli/test_cli.py`:
 
@@ -1046,7 +1046,7 @@ def test_ping_reports_ready_api(monkeypatch) -> None:
     assert result.stdout.strip() == "ready"
 ```
 
-- [ ] **Step 3: Verify CLI tests fail for the missing module**
+- [ ] **Step 3: Verify CLI tests fail because the commands are absent**
 
 Run:
 
@@ -1054,7 +1054,7 @@ Run:
 uv run pytest tests/unit/cli/test_cli.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.cli`.
+Expected: both tests are collected and FAIL because `version` and `ping` are not registered. A collection error does not count as a valid RED.
 
 - [ ] **Step 4: Implement minimal CLI**
 
