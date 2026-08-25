@@ -3,7 +3,11 @@ from uuid import uuid4
 
 import pytest
 
-from shadowops.domain.errors import InvalidStateTransition
+from shadowops.domain.errors import (
+    InvalidStateTransition,
+    OptimisticConcurrencyError,
+    TerminalRunError,
+)
 from shadowops.domain.runs import MAIN_STATE_PATH, AuditRun, RunState
 
 
@@ -58,3 +62,53 @@ def test_terminal_state_cannot_be_left(terminal: RunState) -> None:
 
     with pytest.raises(InvalidStateTransition):
         run.transition(RunState.DISCOVERING, now=now + timedelta(seconds=1))
+
+
+def test_cancel_request_is_optimistic_without_advancing_the_state_version() -> None:
+    now = datetime(2026, 8, 25, 1, 0, tzinfo=UTC)
+    requested_at = now + timedelta(seconds=1)
+    run = AuditRun(id=uuid4(), state=RunState.APPLYING, version=4, updated_at=now)
+
+    run.request_cancel(expected_version=4, now=requested_at)
+
+    assert run.state is RunState.APPLYING
+    assert run.version == 4
+    assert run.cancel_requested_at == requested_at
+    assert run.updated_at == requested_at
+
+
+def test_cancel_request_rejects_a_stale_expected_version() -> None:
+    now = datetime(2026, 8, 25, 1, 0, tzinfo=UTC)
+    run = AuditRun(id=uuid4(), state=RunState.APPLYING, version=4, updated_at=now)
+
+    with pytest.raises(OptimisticConcurrencyError):
+        run.request_cancel(expected_version=3, now=now)
+
+
+def test_cancel_request_is_idempotent_after_cancellation() -> None:
+    now = datetime(2026, 8, 25, 1, 0, tzinfo=UTC)
+    run = AuditRun(
+        id=uuid4(),
+        state=RunState.CANCELLED,
+        version=5,
+        updated_at=now,
+        completed_at=now,
+        cancel_requested_at=now,
+    )
+
+    run.request_cancel(expected_version=1, now=now + timedelta(seconds=1))
+
+    assert run.version == 5
+    assert run.cancel_requested_at == now
+
+
+def test_cancel_request_rejects_a_normally_completed_run() -> None:
+    now = datetime(2026, 8, 25, 1, 0, tzinfo=UTC)
+    run = AuditRun(
+        id=uuid4(), state=RunState.COMPLETED, version=12, updated_at=now, completed_at=now
+    )
+
+    with pytest.raises(TerminalRunError) as error:
+        run.request_cancel(expected_version=12, now=now)
+
+    assert error.value.code == "RUN_TERMINAL"

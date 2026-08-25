@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from shadowops.api.app import create_app
 from shadowops.application.readiness import ReadinessService
-from shadowops.domain.errors import IdempotencyConflictError, RunNotFoundError
+from shadowops.domain.errors import IdempotencyConflictError, RunNotFoundError, TerminalRunError
 from shadowops.domain.runs import AuditRun, RunState
 
 RUN_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -25,6 +25,13 @@ class StubRunService:
         if self._error is not None:
             raise self._error
         return _run()
+
+    def cancel(self, *args: object, **kwargs: object) -> AuditRun:
+        if self._error is not None:
+            raise self._error
+        run = _run()
+        run.cancel_requested_at = NOW
+        return run
 
 
 def _run() -> AuditRun:
@@ -86,3 +93,21 @@ def test_get_run_maps_not_found_to_stable_error() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "RUN_NOT_FOUND"
+
+
+def test_cancel_run_records_a_cooperative_request() -> None:
+    response = _client(StubRunService()).post(
+        f"/api/v1/runs/{RUN_ID}/cancel", json={"expected_version": 1}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["cancel_requested_at"] == NOW.isoformat().replace("+00:00", "Z")
+
+
+def test_cancel_run_maps_terminal_conflict() -> None:
+    response = _client(StubRunService(TerminalRunError(RUN_ID, RunState.COMPLETED))).post(
+        f"/api/v1/runs/{RUN_ID}/cancel", json={"expected_version": 12}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "RUN_TERMINAL"}

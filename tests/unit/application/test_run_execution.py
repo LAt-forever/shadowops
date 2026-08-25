@@ -84,11 +84,13 @@ class MemoryStepRepository:
         claim_token: UUID,
         resulting_run_version: int,
         finished_at: datetime,
+        final_state: RunState,
     ) -> bool:
         step = next(item for item in self._store.steps.values() if item.id == step_id)
         if step.claim_token != claim_token or step.status is not StepStatus.RUNNING:
             return False
         step.status = StepStatus.SUCCEEDED
+        step.to_state = final_state
         step.resulting_run_version = resulting_run_version
         step.finished_at = finished_at
         step.lease_expires_at = None
@@ -242,3 +244,17 @@ def test_heartbeat_renews_only_the_current_claim() -> None:
 
     assert renewed is True
     assert service.heartbeat(stale) is False
+
+
+def test_cancel_requested_during_execution_wins_at_finalize_checkpoint() -> None:
+    store = _store()
+    service = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN])
+    claim = service.claim(EVENT_ID, worker_id="worker-a")
+    assert claim is not None
+    store.runs[RUN_ID].cancel_requested_at = STARTED_AT
+
+    run = service.finalize(claim)
+
+    assert run.state is RunState.CANCELLED
+    assert store.steps[claim.step_key].to_state is RunState.CANCELLED
+    assert len(store.events) == 1

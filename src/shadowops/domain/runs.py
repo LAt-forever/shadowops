@@ -6,7 +6,11 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from shadowops.domain.errors import InvalidStateTransition
+from shadowops.domain.errors import (
+    InvalidStateTransition,
+    OptimisticConcurrencyError,
+    TerminalRunError,
+)
 
 
 class RunState(StrEnum):
@@ -124,6 +128,17 @@ class AuditRun:
         self.updated_at = now
         if target in TERMINAL_STATES:
             self.completed_at = now
+
+    def request_cancel(self, *, expected_version: int, now: datetime) -> None:
+        """Record cooperative cancellation without advancing the lifecycle version."""
+        if self.state is RunState.CANCELLED or self.cancel_requested_at is not None:
+            return
+        if self.state in TERMINAL_STATES:
+            raise TerminalRunError(self.id, self.state)
+        if self.version != expected_version:
+            raise OptimisticConcurrencyError(self.id, expected_version)
+        self.cancel_requested_at = now
+        self.updated_at = now
 
 
 @dataclass

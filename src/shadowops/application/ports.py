@@ -5,7 +5,7 @@ from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
 
-from shadowops.domain.runs import AuditRun, OutboxEvent, RunStep
+from shadowops.domain.runs import AuditRun, OutboxEvent, RunState, RunStep
 
 
 class RunRepository(Protocol):
@@ -41,6 +41,7 @@ class RunStepRepository(Protocol):
         claim_token: UUID,
         resulting_run_version: int,
         finished_at: datetime,
+        final_state: RunState,
     ) -> bool: ...
 
 
@@ -60,6 +61,10 @@ class OutboxRepository(Protocol):
     ) -> list[OutboxEvent]: ...
 
     def reopen(self, event_id: UUID, *, available_at: datetime, reason: str) -> bool: ...
+
+    def wake_current(
+        self, aggregate_id: UUID, *, aggregate_version: int, available_at: datetime
+    ) -> bool: ...
 
 
 class UnitOfWork(Protocol):

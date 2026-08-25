@@ -86,6 +86,24 @@ class RunService:
             raise RunNotFoundError(run_id)
         return run
 
+    def cancel(self, run_id: UUID, *, expected_version: int) -> AuditRun:
+        with self._uow_factory() as uow:
+            run = uow.runs.get(run_id)
+            if run is None:
+                raise RunNotFoundError(run_id)
+            already_requested = run.cancel_requested_at is not None
+            run.request_cancel(expected_version=expected_version, now=self._clock())
+            if already_requested or run.state is RunState.CANCELLED:
+                return run
+            uow.runs.save(run, expected_version=expected_version)
+            uow.outbox.wake_current(
+                run.id,
+                aggregate_version=run.version,
+                available_at=run.cancel_requested_at or self._clock(),
+            )
+            uow.commit()
+            return run
+
     @staticmethod
     def _resolve_replay(run: AuditRun, fingerprint: str, key: str) -> AuditRun:
         if run.request_fingerprint != fingerprint:

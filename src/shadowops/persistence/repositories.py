@@ -274,6 +274,7 @@ class SqlAlchemyRunStepRepository:
         claim_token: UUID,
         resulting_run_version: int,
         finished_at: datetime,
+        final_state: RunState,
     ) -> bool:
         result = cast(
             CursorResult[Any],
@@ -285,7 +286,12 @@ class SqlAlchemyRunStepRepository:
                     RunStepModel.status == StepStatus.RUNNING.value,
                 )
                 .values(
-                    status=StepStatus.SUCCEEDED.value,
+                    status=(
+                        StepStatus.CANCELLED.value
+                        if final_state is RunState.CANCELLED
+                        else StepStatus.SUCCEEDED.value
+                    ),
+                    to_state=final_state.value,
                     resulting_run_version=resulting_run_version,
                     finished_at=finished_at,
                     lease_expires_at=None,
@@ -402,6 +408,27 @@ class SqlAlchemyOutboxRepository:
                 update(OutboxEventModel)
                 .where(OutboxEventModel.id == event_id)
                 .values(published_at=None, available_at=available_at, last_error=reason)
+            ),
+        )
+        return result.rowcount == 1
+
+    def wake_current(
+        self, aggregate_id: UUID, *, aggregate_version: int, available_at: datetime
+    ) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(OutboxEventModel)
+                .where(
+                    OutboxEventModel.aggregate_id == aggregate_id,
+                    OutboxEventModel.aggregate_version == aggregate_version,
+                    OutboxEventModel.topic == "run.advance.requested.v1",
+                )
+                .values(
+                    published_at=None,
+                    available_at=available_at,
+                    last_error="WOKEN_FOR_CANCELLATION",
+                )
             ),
         )
         return result.rowcount == 1

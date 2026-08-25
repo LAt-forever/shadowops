@@ -56,3 +56,13 @@ class ClaimLostError(DomainError):
 
     def __init__(self, step_id: Any) -> None:
         super().__init__(f"Run step {step_id} is no longer owned by this claim")
+
+
+class TerminalRunError(DomainError):
+    """Raised when a command cannot apply to an already terminal run."""
+
+    code = "RUN_TERMINAL"
+
+    def __init__(self, run_id: Any, state: Any) -> None:
+        state_value = getattr(state, "value", str(state))
+        super().__init__(f"Audit run {run_id} is already terminal in state {state_value}")

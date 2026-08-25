@@ -25,6 +25,10 @@ class MemoryRunRepository:
     def get_by_idempotency_key(self, key: str) -> AuditRun | None:
         return next((run for run in self.by_id.values() if run.idempotency_key == key), None)
 
+    def save(self, run: AuditRun, *, expected_version: int) -> None:
+        assert self.by_id[run.id].version == expected_version
+        self.by_id[run.id] = run
+
 
 class MemoryOutboxRepository:
     def __init__(self) -> None:
@@ -32,6 +36,19 @@ class MemoryOutboxRepository:
 
     def add(self, event: OutboxEvent) -> None:
         self.events.append(event)
+
+    def wake_current(
+        self, aggregate_id: UUID, *, aggregate_version: int, available_at: datetime
+    ) -> bool:
+        event = next(
+            item
+            for item in self.events
+            if item.aggregate_id == aggregate_id and item.aggregate_version == aggregate_version
+        )
+        event.published_at = None
+        event.available_at = available_at
+        event.last_error = "WOKEN_FOR_CANCELLATION"
+        return True
 
 
 class MemoryUnitOfWork:
@@ -129,3 +146,23 @@ def test_get_run_rejects_an_unknown_identifier() -> None:
         service.get(missing_id)
 
     assert error.value.code == "RUN_NOT_FOUND"
+
+
+def test_cancel_run_records_request_and_wakes_the_current_outbox_once() -> None:
+    uow = MemoryUnitOfWork()
+    service = _service(uow)
+    run = service.create(
+        CreateAuditRunRequestV1(repository_path="projects/demo"),
+        idempotency_key="request-1",
+    )
+    uow.outbox.events[0].published_at = datetime(2026, 8, 25, 2, 0, tzinfo=UTC)
+
+    cancelled = service.cancel(run.id, expected_version=1)
+    replay = service.cancel(run.id, expected_version=999)
+
+    assert cancelled.cancel_requested_at == datetime(2026, 8, 25, 2, 0, tzinfo=UTC)
+    assert cancelled.version == 1
+    assert replay.cancel_requested_at == cancelled.cancel_requested_at
+    assert uow.outbox.events[0].published_at is None
+    assert uow.outbox.events[0].last_error == "WOKEN_FOR_CANCELLATION"
+    assert uow.commits == 2

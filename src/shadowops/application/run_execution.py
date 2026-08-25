@@ -44,7 +44,11 @@ class RunExecutionService:
             expected_version = int(str(event.payload.get("expected_version")))
             if run.state is not expected_state or run.version != expected_version:
                 return None
-            target = next_main_state(run.state)
+            target = (
+                RunState.CANCELLED
+                if run.cancel_requested_at is not None
+                else next_main_state(run.state)
+            )
             if target is None:
                 return None
 
@@ -93,17 +97,21 @@ class RunExecutionService:
             run = uow.runs.get(claim.run_id)
             if run is None or run.version != claim.expected_run_version:
                 raise ClaimLostError(claim.id)
+            final_state = (
+                RunState.CANCELLED if run.cancel_requested_at is not None else claim.to_state
+            )
             resulting_version = run.version + 1
             if not uow.steps.complete(
                 claim.id,
                 claim_token=claim.claim_token,
                 resulting_run_version=resulting_version,
                 finished_at=now,
+                final_state=final_state,
             ):
                 raise ClaimLostError(claim.id)
 
             expected_version = run.version
-            run.transition(claim.to_state, now=now)
+            run.transition(final_state, now=now)
             uow.runs.save(run, expected_version=expected_version)
             if run.state not in TERMINAL_STATES:
                 uow.outbox.add(self._next_event(run, now))

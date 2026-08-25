@@ -5,9 +5,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
-from shadowops.api.schemas.runs import AuditRunViewV1, CreateAuditRunRequestV1
+from shadowops.api.schemas.runs import (
+    AuditRunViewV1,
+    CancelAuditRunRequestV1,
+    CreateAuditRunRequestV1,
+)
 from shadowops.application.runs import RunService
-from shadowops.domain.errors import IdempotencyConflictError, RunNotFoundError
+from shadowops.domain.errors import (
+    IdempotencyConflictError,
+    OptimisticConcurrencyError,
+    RunNotFoundError,
+    TerminalRunError,
+)
 from shadowops.domain.runs import AuditRun
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -61,5 +70,24 @@ def get_run(run_id: UUID, request: Request) -> AuditRunViewV1:
     except RunNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
+        ) from error
+    return _view(run)
+
+
+@router.post(
+    "/{run_id}/cancel",
+    response_model=AuditRunViewV1,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def cancel_run(run_id: UUID, payload: CancelAuditRunRequestV1, request: Request) -> AuditRunViewV1:
+    try:
+        run = _service(request).cancel(run_id, expected_version=payload.expected_version)
+    except RunNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
+        ) from error
+    except (OptimisticConcurrencyError, TerminalRunError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
         ) from error
     return _view(run)
