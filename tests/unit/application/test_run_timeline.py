@@ -143,6 +143,13 @@ def test_timeline_after_version_is_an_exclusive_resume_cursor() -> None:
             to_state=RunState.COMPLETED,
             resulting_version=3,
         ),
+        _step(
+            number=3,
+            from_state=RunState.DISCOVERING,
+            to_state=RunState.STATIC_ANALYSIS,
+            status=StepStatus.RUNNING,
+            resulting_version=None,
+        ),
     ]
     service = RunTimelineService(lambda: MemoryUnitOfWork(_run(state=RunState.COMPLETED), steps))
 

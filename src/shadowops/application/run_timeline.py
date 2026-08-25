@@ -41,7 +41,8 @@ class RunTimelineService:
             if run is None:
                 raise RunNotFoundError(run_id)
             steps = uow.steps.list_for_run(run_id)
-            current_step = uow.steps.get_current(run_id)
+            terminal = run.state in TERMINAL_STATES
+            current_step = None if terminal else uow.steps.get_current(run_id)
 
         events: list[TimelineEvent] = []
         if after_version < 1:
@@ -73,7 +74,7 @@ class RunTimelineService:
         return RunTimeline(
             run_id=run.id,
             run_version=run.version,
-            terminal=run.state in TERMINAL_STATES,
+            terminal=terminal,
             events=events,
             current_step=current_step,
         )
