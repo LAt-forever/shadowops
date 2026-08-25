@@ -19,6 +19,10 @@ def test_settings_use_safe_local_defaults() -> None:
     assert settings.outbox_poll_interval_seconds == 0.5
     assert settings.outbox_retry_base_seconds == 1.0
     assert settings.outbox_retry_max_seconds == 30.0
+    assert settings.reconcile_batch_size == 50
+    assert settings.reconcile_interval_seconds == 2.0
+    assert settings.recovery_stale_after_seconds == 10.0
+    assert settings.recovery_max_attempts == 5
 
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:

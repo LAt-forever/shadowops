@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     outbox_poll_interval_seconds: float = 0.5
     outbox_retry_base_seconds: float = 1.0
     outbox_retry_max_seconds: float = 30.0
+    reconcile_batch_size: int = 50
+    reconcile_interval_seconds: float = 2.0
+    recovery_stale_after_seconds: float = 10.0
+    recovery_max_attempts: int = 5
 
 
 @lru_cache

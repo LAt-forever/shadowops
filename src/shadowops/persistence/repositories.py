@@ -4,13 +4,14 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from shadowops.domain.errors import OptimisticConcurrencyError
 from shadowops.domain.runs import (
+    TERMINAL_STATES,
     AuditRun,
     CleanupStatus,
     OutboxEvent,
@@ -363,6 +364,44 @@ class SqlAlchemyOutboxRepository:
                     publish_attempts=OutboxEventModel.publish_attempts + 1,
                     last_error=error,
                 )
+            ),
+        )
+        return result.rowcount == 1
+
+    def lock_stale_deliveries(
+        self, *, now: datetime, stale_before: datetime, limit: int
+    ) -> list[OutboxEvent]:
+        active_step = exists(
+            select(RunStepModel.id).where(
+                RunStepModel.run_id == OutboxEventModel.aggregate_id,
+                RunStepModel.expected_run_version == OutboxEventModel.aggregate_version,
+                RunStepModel.status == StepStatus.RUNNING.value,
+                RunStepModel.lease_expires_at > now,
+            )
+        )
+        models = self._session.scalars(
+            select(OutboxEventModel)
+            .join(AuditRunModel, AuditRunModel.id == OutboxEventModel.aggregate_id)
+            .where(
+                OutboxEventModel.published_at.is_not(None),
+                OutboxEventModel.published_at <= stale_before,
+                AuditRunModel.version == OutboxEventModel.aggregate_version,
+                AuditRunModel.state.not_in([state.value for state in TERMINAL_STATES]),
+                ~active_step,
+            )
+            .order_by(OutboxEventModel.published_at, OutboxEventModel.id)
+            .limit(limit)
+            .with_for_update(of=OutboxEventModel, skip_locked=True)
+        ).all()
+        return [_to_event(model) for model in models]
+
+    def reopen(self, event_id: UUID, *, available_at: datetime, reason: str) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(OutboxEventModel)
+                .where(OutboxEventModel.id == event_id)
+                .values(published_at=None, available_at=available_at, last_error=reason)
             ),
         )
         return result.rowcount == 1

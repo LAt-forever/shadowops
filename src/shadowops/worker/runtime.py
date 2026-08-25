@@ -10,6 +10,7 @@ from shadowops.config import get_settings
 from shadowops.persistence.database import create_control_engine, create_session_factory
 from shadowops.persistence.uow import SqlAlchemyUnitOfWork
 from shadowops.worker.outbox import CeleryEventPublisher, OutboxDispatcher
+from shadowops.worker.reconciler import RunReconciler
 
 
 @lru_cache
@@ -36,4 +37,15 @@ def get_outbox_dispatcher() -> OutboxDispatcher:
         CeleryEventPublisher(celery_app),
         retry_base=timedelta(seconds=settings.outbox_retry_base_seconds),
         retry_max=timedelta(seconds=settings.outbox_retry_max_seconds),
+    )
+
+
+@lru_cache
+def get_run_reconciler() -> RunReconciler:
+    settings = get_settings()
+    sessions = get_worker_session_factory()
+    return RunReconciler(
+        lambda: SqlAlchemyUnitOfWork(sessions),
+        stale_after=timedelta(seconds=settings.recovery_stale_after_seconds),
+        max_attempts=settings.recovery_max_attempts,
     )

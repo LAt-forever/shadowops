@@ -55,6 +55,12 @@ class OutboxRepository(Protocol):
 
     def mark_failed(self, event_id: UUID, *, error: str, available_at: datetime) -> bool: ...
 
+    def lock_stale_deliveries(
+        self, *, now: datetime, stale_before: datetime, limit: int
+    ) -> list[OutboxEvent]: ...
+
+    def reopen(self, event_id: UUID, *, available_at: datetime, reason: str) -> bool: ...
+
 
 class UnitOfWork(Protocol):
     @property

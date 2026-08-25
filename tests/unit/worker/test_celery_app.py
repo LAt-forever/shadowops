@@ -25,3 +25,8 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
         "task": "shadowops.maintenance.dispatch_outbox",
         "schedule": 0.5,
     }
+    assert application.conf.shadowops_reconcile_batch_size == 50
+    assert application.conf.beat_schedule["reconcile-runs"] == {
+        "task": "shadowops.maintenance.reconcile_runs",
+        "schedule": 2.0,
+    }
