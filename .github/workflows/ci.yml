@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.12"
+          enable-cache: true
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.12
+          uv sync --frozen
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: Mypy
+        run: uv run mypy src
+      - name: Unit tests
+        run: uv run pytest tests/unit -v
+
+  integration:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.12"
+          enable-cache: true
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.12
+          uv sync --frozen
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Start services
+        run: docker compose up --build --detach --wait
+      - name: Upgrade control database
+        run: docker compose exec -T api alembic -c alembic.ini upgrade head
+      - name: Integration tests
+        run: uv run pytest tests/integration -v
+      - name: Capture Compose logs
+        if: failure()
+        run: docker compose logs --no-color > compose.log
+      - name: Upload Compose logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: compose-logs
+          path: compose.log
+          if-no-files-found: error
+      - name: Tear down services
+        if: always()
+        run: docker compose down --volumes

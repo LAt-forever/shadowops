@@ -157,14 +157,14 @@ Expected: uv creates `.venv` and `uv.lock` and installs the dev group without er
 
 - [ ] **Step 2: Write the failing package version test**
 
-Create `tests/unit/test_package.py`:
+Create a behavior-free `src/shadowops/__init__.py` containing only a package docstring so pytest can collect the test. Create `tests/unit/test_package.py`:
 
 ```python
-from shadowops import __version__
+import shadowops
 
 
 def test_package_exposes_initial_version() -> None:
-    assert __version__ == "0.1.0"
+    assert getattr(shadowops, "__version__", None) == "0.1.0"
 ```
 
 - [ ] **Step 3: Run the test and verify RED**
@@ -175,13 +175,15 @@ Run:
 uv run pytest tests/unit/test_package.py -v
 ```
 
-Expected: FAIL during import because `src/shadowops/__init__.py` does not exist.
+Expected: FAIL with `AssertionError` because `shadowops.__version__` is absent.
 
 - [ ] **Step 4: Add the minimal package implementation**
 
-Create `src/shadowops/__init__.py`:
+Replace `src/shadowops/__init__.py` with:
 
 ```python
+"""ShadowOps package."""
+
 __version__ = "0.1.0"
 ```
 
@@ -230,14 +232,16 @@ Expected: `pyproject.toml` and `uv.lock` contain resolved compatible dependencie
 
 - [ ] **Step 2: Write failing settings tests**
 
-Create `tests/unit/test_config.py`:
+Create a behavior-free `src/shadowops/config.py` containing only a module docstring. Create `tests/unit/test_config.py`:
 
 ```python
-from shadowops.config import Settings
+import shadowops.config as config
 
 
 def test_settings_use_safe_local_defaults() -> None:
-    settings = Settings(_env_file=None)
+    settings_type = getattr(config, "Settings", None)
+    assert settings_type is not None
+    settings = settings_type(_env_file=None)
 
     assert settings.app_name == "ShadowOps"
     assert settings.environment == "development"
@@ -248,8 +252,9 @@ def test_settings_use_safe_local_defaults() -> None:
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:
     monkeypatch.setenv("SHADOWOPS_HTTP_PORT", "8123")
-
-    settings = Settings(_env_file=None)
+    settings_type = getattr(config, "Settings", None)
+    assert settings_type is not None
+    settings = settings_type(_env_file=None)
 
     assert settings.http_port == 8123
 ```
@@ -262,13 +267,15 @@ Run:
 uv run pytest tests/unit/test_config.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'shadowops.config'`.
+Expected: two assertion failures because `shadowops.config.Settings` is absent.
 
 - [ ] **Step 4: Implement the minimal settings model**
 
-Create `src/shadowops/config.py`:
+Replace `src/shadowops/config.py` with:
 
 ```python
+"""Application configuration."""
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -285,12 +292,14 @@ class Settings(BaseSettings):
     environment: str = "development"
     http_host: str = "127.0.0.1"
     http_port: int = 8000
-    database_url: str = (
-        "postgresql+psycopg://shadowops:shadowops@control-postgres:5432/shadowops"
-    )
+    database_url: str = "postgresql+psycopg://shadowops:shadowops@control-postgres:5432/shadowops"
     redis_url: str = "redis://redis:6379/0"
     postgres_major: int = 16
     log_level: str = "INFO"
+    health_connect_timeout_seconds: int = 2
+    health_read_timeout_seconds: float = 2.0
+    health_pool_timeout_seconds: float = 2.0
+    health_statement_timeout_ms: int = 2_000
 
 
 @lru_cache
@@ -308,6 +317,10 @@ SHADOWOPS_DATABASE_URL=postgresql+psycopg://shadowops:shadowops@control-postgres
 SHADOWOPS_REDIS_URL=redis://redis:6379/0
 SHADOWOPS_POSTGRES_MAJOR=16
 SHADOWOPS_LOG_LEVEL=INFO
+SHADOWOPS_HEALTH_CONNECT_TIMEOUT_SECONDS=2
+SHADOWOPS_HEALTH_READ_TIMEOUT_SECONDS=2.0
+SHADOWOPS_HEALTH_POOL_TIMEOUT_SECONDS=2.0
+SHADOWOPS_HEALTH_STATEMENT_TIMEOUT_MS=2000
 ```
 
 - [ ] **Step 5: Verify settings tests pass**
@@ -322,17 +335,19 @@ Expected: two tests pass.
 
 - [ ] **Step 6: Write the failing JSON logging test**
 
-Create `tests/unit/observability/test_logging.py`:
+Create behavior-free module docstrings in `src/shadowops/observability/__init__.py` and `src/shadowops/observability/logging.py`. Create `tests/unit/observability/test_logging.py`:
 
 ```python
 import json
 
 import structlog
 
-from shadowops.observability.logging import configure_logging
+import shadowops.observability.logging as logging_config
 
 
 def test_configured_logger_emits_json(capsys) -> None:
+    configure_logging = getattr(logging_config, "configure_logging", None)
+    assert configure_logging is not None
     configure_logging("INFO")
 
     structlog.get_logger().info("service_started", service="api")
@@ -351,13 +366,15 @@ Run:
 uv run pytest tests/unit/observability/test_logging.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.observability`.
+Expected: FAIL with `AssertionError` because `configure_logging` is absent.
 
 - [ ] **Step 8: Implement minimal structured logging**
 
-Create an empty `src/shadowops/observability/__init__.py` and create `src/shadowops/observability/logging.py`:
+Keep the package docstring in `src/shadowops/observability/__init__.py` and replace `src/shadowops/observability/logging.py` with:
 
 ```python
+"""Structured logging configuration."""
+
 import logging
 import sys
 
@@ -365,17 +382,36 @@ import structlog
 
 
 def configure_logging(level: str) -> None:
-    logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level, force=True)
+    shared_processors = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.format_exc_info,
+    ]
     structlog.configure(
         processors=[
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
-            structlog.processors.JSONRenderer(),
+            structlog.contextvars.merge_contextvars,
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=False,
     )
+
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(level.upper())
 ```
 
 - [ ] **Step 9: Verify Task 2 tests and full unit suite pass**
@@ -408,14 +444,16 @@ git commit -m "feat: add typed settings and structured logging"
 
 - [ ] **Step 1: Write failing readiness tests**
 
-Create `tests/unit/application/test_readiness.py`:
+Create behavior-free module docstrings in `src/shadowops/application/__init__.py` and `src/shadowops/application/readiness.py`. Create `tests/unit/application/test_readiness.py`:
 
 ```python
-from shadowops.application.readiness import ReadinessService
+import shadowops.application.readiness as readiness
 
 
 def test_readiness_is_ready_when_all_checks_succeed() -> None:
-    result = ReadinessService({"database": lambda: None, "redis": lambda: None}).run()
+    service_type = getattr(readiness, "ReadinessService", None)
+    assert service_type is not None
+    result = service_type({"database": lambda: None, "redis": lambda: None}).run()
 
     assert result.ready is True
     assert result.dependencies == {"database": "ok", "redis": "ok"}
@@ -425,7 +463,9 @@ def test_readiness_reports_each_failed_dependency() -> None:
     def fail() -> None:
         raise ConnectionError("offline")
 
-    result = ReadinessService({"database": fail, "redis": lambda: None}).run()
+    service_type = getattr(readiness, "ReadinessService", None)
+    assert service_type is not None
+    result = service_type({"database": fail, "redis": lambda: None}).run()
 
     assert result.ready is False
     assert result.dependencies == {"database": "unavailable", "redis": "ok"}
@@ -439,13 +479,15 @@ Run:
 uv run pytest tests/unit/application/test_readiness.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.application`.
+Expected: two assertion failures because `ReadinessService` is absent.
 
 - [ ] **Step 3: Implement readiness aggregation**
 
-Create an empty `src/shadowops/application/__init__.py` and create `src/shadowops/application/readiness.py`:
+Keep the application package docstring and replace `src/shadowops/application/readiness.py` with:
 
 ```python
+"""Dependency readiness aggregation."""
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -513,20 +555,25 @@ Run:
 
 ```bash
 uv add fastapi 'uvicorn[standard]' httpx
+uv add --dev httpx2
 ```
+
+`httpx2` is a development-only dependency required by Starlette 1.6 TestClient; runtime CLI HTTP remains on `httpx`.
 
 - [ ] **Step 2: Write failing API health tests**
 
-Create `tests/unit/api/test_health.py`:
+Create behavior-free module docstrings in `src/shadowops/api/__init__.py`, `src/shadowops/api/app.py`, `src/shadowops/api/routes/__init__.py`, and `src/shadowops/api/routes/health.py`. Create `tests/unit/api/test_health.py`:
 
 ```python
 from fastapi.testclient import TestClient
 
-from shadowops.api.app import create_app
+import shadowops.api.app as api_app
 from shadowops.application.readiness import ReadinessService
 
 
 def test_liveness_does_not_depend_on_external_services() -> None:
+    create_app = getattr(api_app, "create_app", None)
+    assert create_app is not None
     client = TestClient(create_app(ReadinessService({})))
 
     response = client.get("/health/live")
@@ -539,6 +586,8 @@ def test_readiness_returns_503_with_dependency_status() -> None:
     def fail() -> None:
         raise ConnectionError("offline")
 
+    create_app = getattr(api_app, "create_app", None)
+    assert create_app is not None
     client = TestClient(create_app(ReadinessService({"database": fail})))
 
     response = client.get("/health/ready")
@@ -558,15 +607,17 @@ Run:
 uv run pytest tests/unit/api/test_health.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.api`.
+Expected: two assertion failures because `create_app` is absent.
 
 - [ ] **Step 4: Implement the health router and application factory**
 
-Create empty `__init__.py` files under `src/shadowops/api/` and `src/shadowops/api/routes/`.
+Keep the API package docstrings.
 
 Create `src/shadowops/api/routes/health.py`:
 
 ```python
+"""Service health routes."""
+
 from fastapi import APIRouter, Request, Response, status
 
 from shadowops.application.readiness import ReadinessService
@@ -594,6 +645,8 @@ def ready(request: Request, response: Response) -> dict[str, object]:
 Create `src/shadowops/api/app.py`:
 
 ```python
+"""FastAPI application factory."""
+
 from fastapi import FastAPI
 
 from shadowops.api.routes.health import router as health_router
@@ -655,35 +708,44 @@ uv add 'sqlalchemy>=2,<3' 'psycopg[binary]>=3,<4' alembic redis
 
 - [ ] **Step 2: Write failing adapter tests using real adapter behavior at the client boundary**
 
-Create `tests/unit/infrastructure/test_health.py`:
+Create behavior-free module docstrings in `src/shadowops/infrastructure/__init__.py` and `src/shadowops/infrastructure/health.py`. Create `tests/unit/infrastructure/test_health.py`:
 
 ```python
-from unittest.mock import Mock
+import pytest
+from sqlalchemy import create_engine
 
-from shadowops.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
-
-
-def test_database_health_executes_select_one() -> None:
-    connection = Mock()
-    context_manager = Mock()
-    context_manager.__enter__ = Mock(return_value=connection)
-    context_manager.__exit__ = Mock(return_value=False)
-    engine = Mock()
-    engine.connect.return_value = context_manager
-
-    DatabaseHealthCheck(engine)()
-
-    statement = connection.execute.call_args.args[0]
-    assert str(statement) == "SELECT 1"
+import shadowops.infrastructure.health as health
 
 
-def test_redis_health_requires_successful_ping() -> None:
-    client = Mock()
-    client.ping.return_value = True
+def test_database_health_succeeds_when_database_accepts_query() -> None:
+    check_type = getattr(health, "DatabaseHealthCheck", None)
+    assert check_type is not None
+    engine = create_engine("sqlite+pysqlite:///:memory:")
 
-    RedisHealthCheck(client)()
+    check_type(engine)()
 
-    client.ping.assert_called_once_with()
+
+class RedisClient:
+    def __init__(self, response: bool) -> None:
+        self._response = response
+
+    def ping(self) -> bool:
+        return self._response
+
+
+def test_redis_health_succeeds_for_true_ping() -> None:
+    check_type = getattr(health, "RedisHealthCheck", None)
+    assert check_type is not None
+
+    check_type(RedisClient(True))()
+
+
+def test_redis_health_rejects_non_true_ping() -> None:
+    check_type = getattr(health, "RedisHealthCheck", None)
+    assert check_type is not None
+
+    with pytest.raises(ConnectionError, match="non-true"):
+        check_type(RedisClient(False))()
 ```
 
 - [ ] **Step 3: Verify adapter tests fail for the missing module**
@@ -694,13 +756,15 @@ Run:
 uv run pytest tests/unit/infrastructure/test_health.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.infrastructure`.
+Expected: three assertion failures because both health-check classes are absent.
 
 - [ ] **Step 4: Implement minimal health adapters**
 
-Create an empty `src/shadowops/infrastructure/__init__.py` and create `src/shadowops/infrastructure/health.py`:
+Keep the infrastructure package docstring and replace `src/shadowops/infrastructure/health.py` with:
 
 ```python
+"""External dependency health checks."""
+
 from typing import Any
 
 from sqlalchemy import Engine, text
@@ -732,25 +796,38 @@ Run:
 uv run pytest tests/unit/infrastructure/test_health.py -v
 ```
 
-Expected: two tests pass.
+Expected: three tests pass.
 
 - [ ] **Step 6: Wire real checks into the default FastAPI application**
 
-Update `src/shadowops/api/app.py` so the default factory creates a SQLAlchemy engine and Redis client from `get_settings()`, then passes `DatabaseHealthCheck` and `RedisHealthCheck` into `ReadinessService`. Preserve explicit injection in unit tests.
+Before implementation, add `test_default_readiness_checks_database_and_redis` to `tests/unit/api/test_health.py`. Replace only the external engine and Redis client factories with an in-memory SQLite engine and a true-ping Redis fake, call the real `/health/ready` route, and assert both dependency keys are `ok`. Run the single test and confirm it fails because the current default application returns an empty dependency map.
+
+Then update `src/shadowops/api/app.py` so the default factory creates a SQLAlchemy engine and Redis client from `get_settings()`, then passes `DatabaseHealthCheck` and `RedisHealthCheck` into `ReadinessService`. Preserve explicit injection in unit tests.
 
 The resulting factory signature remains:
 
 ```python
-def create_app(readiness_service: ReadinessService | None = None) -> FastAPI:
-    ...
+def create_app(readiness_service: ReadinessService | None = None) -> FastAPI: ...
 ```
 
 When `readiness_service is None`, construct:
 
 ```python
 settings = get_settings()
-engine = create_engine(settings.database_url, pool_pre_ping=True)
-redis_client = redis.from_url(settings.redis_url)
+engine = create_engine(
+    settings.database_url,
+    connect_args={
+        "connect_timeout": settings.health_connect_timeout_seconds,
+        "options": f"-c statement_timeout={settings.health_statement_timeout_ms}",
+    },
+    pool_pre_ping=True,
+    pool_timeout=settings.health_pool_timeout_seconds,
+)
+redis_client = redis.from_url(
+    settings.redis_url,
+    socket_connect_timeout=settings.health_connect_timeout_seconds,
+    socket_timeout=settings.health_read_timeout_seconds,
+)
 readiness_service = ReadinessService(
     {
         "database": DatabaseHealthCheck(engine),
@@ -872,7 +949,7 @@ Run:
 uv add 'celery[redis]'
 ```
 
-- [ ] **Step 2: Write the failing Celery configuration test**
+- [ ] **Step 2: Add an importable no-behavior worker scaffold and write the failing configuration test**
 
 Create `tests/unit/worker/test_celery_app.py`:
 
@@ -891,9 +968,12 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.task_serializer == "json"
     assert application.conf.accept_content == ["json"]
     assert application.conf.task_acks_late is True
+    assert application.conf.broker_connection_retry_on_startup is True
+    assert application.conf.worker_hijack_root_logger is False
+    assert application.conf.worker_cancel_long_running_tasks_on_connection_loss is True
 ```
 
-- [ ] **Step 3: Verify the test fails for the missing worker module**
+- [ ] **Step 3: Verify the test fails because the scaffold has no Celery behavior**
 
 Run:
 
@@ -901,7 +981,7 @@ Run:
 uv run pytest tests/unit/worker/test_celery_app.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.worker`.
+Expected: the test is collected and FAILS because the scaffold does not return a configured Celery app. A collection error does not count as a valid RED.
 
 - [ ] **Step 4: Implement minimal Celery configuration**
 
@@ -924,6 +1004,9 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         worker_prefetch_multiplier=1,
         timezone="UTC",
         enable_utc=True,
+        broker_connection_retry_on_startup=True,
+        worker_hijack_root_logger=False,
+        worker_cancel_long_running_tasks_on_connection_loss=True,
     )
     return application
 
@@ -970,7 +1053,7 @@ Run:
 uv add typer
 ```
 
-- [ ] **Step 2: Write failing CLI tests**
+- [ ] **Step 2: Add an importable command-free CLI scaffold and write failing CLI tests**
 
 Create `tests/unit/cli/test_cli.py`:
 
@@ -1005,7 +1088,7 @@ def test_ping_reports_ready_api(monkeypatch) -> None:
     assert result.stdout.strip() == "ready"
 ```
 
-- [ ] **Step 3: Verify CLI tests fail for the missing module**
+- [ ] **Step 3: Verify CLI tests fail because the commands are absent**
 
 Run:
 
@@ -1013,13 +1096,15 @@ Run:
 uv run pytest tests/unit/cli/test_cli.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` for `shadowops.cli`.
+Expected: both tests are collected and FAIL because `version` and `ping` are not registered. A collection error does not count as a valid RED.
 
 - [ ] **Step 4: Implement minimal CLI**
 
 Create an empty `src/shadowops/cli/__init__.py` and create `src/shadowops/cli/app.py`:
 
 ```python
+import subprocess
+
 import httpx
 import typer
 
@@ -1037,7 +1122,8 @@ def version() -> None:
 def ping(
     api_url: str = typer.Option("http://127.0.0.1:8000", help="ShadowOps API base URL"),
 ) -> None:
-    response = httpx.get(f"{api_url.rstrip('/')}/health/ready", timeout=5.0)
+    with httpx.Client(trust_env=False) as client:
+        response = client.get(f"{api_url.rstrip('/')}/health/ready", timeout=5.0)
     response.raise_for_status()
     typer.echo(response.json()["status"])
 ```
@@ -1081,13 +1167,25 @@ import httpx
 
 
 def test_compose_api_reports_database_and_redis_ready() -> None:
-    response = httpx.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
+    with httpx.Client(trust_env=False) as client:
+        response = client.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
 
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
         "dependencies": {"database": "ok", "redis": "ok"},
     }
+
+
+def test_worker_runs_as_non_root_user() -> None:
+    result = subprocess.run(
+        ["docker", "compose", "exec", "-T", "worker", "id", "-u"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() != "0"
 ```
 
 - [ ] **Step 2: Verify integration test fails before Compose exists**
@@ -1206,6 +1304,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A shadowops.worker.celery_app:celery_app inspect ping --destination celery@$$HOSTNAME --timeout=2 | grep -q pong
+      interval: 5s
+      timeout: 4s
+      retries: 10
+      start_period: 5s
 
 volumes:
   control-postgres-data:
@@ -1242,7 +1348,7 @@ Run:
 docker compose up --build --detach --wait
 ```
 
-Expected: all four services start; API, PostgreSQL, and Redis health checks report healthy; worker remains running.
+Expected: all four services start; API, worker, PostgreSQL, and Redis health checks report healthy.
 
 - [ ] **Step 8: Apply the control-plane migration**
 
@@ -1263,7 +1369,7 @@ Run:
 uv run pytest tests/integration/test_service_health.py -v
 ```
 
-Expected: one integration test passes.
+Expected: six integration cases pass, including independent PostgreSQL/Redis outage and recovery, worker broker roundtrip/non-root execution, and parseable API JSON logs.
 
 - [ ] **Step 10: Verify service logs and tear down cleanly**
 
@@ -1291,6 +1397,7 @@ git commit -m "build: add local control-plane services"
 - Create: `.github/workflows/ci.yml`
 - Modify: `README.md`
 - Create: `docs/development.md`
+- Create: `docs/handoffs/M0.md`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 
