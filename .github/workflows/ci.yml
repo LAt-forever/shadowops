@@ -35,8 +35,8 @@ jobs:
         run: uv run ruff format --check .
       - name: Mypy
         run: uv run mypy src
-      - name: Unit tests
-        run: uv run pytest tests/unit -v
+      - name: Unit and contract tests
+        run: uv run pytest tests/unit tests/contract -v
 
   integration:
     needs: quality
@@ -56,13 +56,13 @@ jobs:
           uv python install 3.12
           uv sync --frozen
       - name: Validate Compose
-        run: docker compose config --quiet
+        run: docker compose -f compose.yaml -f compose.test.yaml config --quiet
       - name: Start services
-        run: docker compose up --build --detach --wait
+        run: docker compose -f compose.yaml -f compose.test.yaml up --build --detach --wait
       - name: Upgrade control database
-        run: docker compose exec -T api alembic -c alembic.ini upgrade head
-      - name: Integration tests
-        run: uv run pytest tests/integration -v
+        run: docker compose -f compose.yaml -f compose.test.yaml exec -T api alembic -c alembic.ini upgrade head
+      - name: Integration and E2E tests
+        run: uv run pytest tests/integration tests/e2e -v
       - name: Capture Compose logs
         if: failure()
         run: docker compose logs --no-color > compose.log
@@ -75,4 +75,4 @@ jobs:
           if-no-files-found: error
       - name: Tear down services
         if: always()
-        run: docker compose down --volumes
+        run: docker compose -f compose.yaml -f compose.test.yaml down --volumes

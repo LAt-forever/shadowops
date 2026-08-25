@@ -15,6 +15,16 @@ def test_settings_use_safe_local_defaults() -> None:
     assert settings.health_read_timeout_seconds == 2.0
     assert settings.health_pool_timeout_seconds == 2.0
     assert settings.health_statement_timeout_ms == 2_000
+    assert settings.outbox_batch_size == 50
+    assert settings.outbox_poll_interval_seconds == 0.5
+    assert settings.outbox_retry_base_seconds == 1.0
+    assert settings.outbox_retry_max_seconds == 30.0
+    assert settings.reconcile_batch_size == 50
+    assert settings.reconcile_interval_seconds == 2.0
+    assert settings.recovery_stale_after_seconds == 10.0
+    assert settings.recovery_max_attempts == 5
+    assert settings.sse_poll_interval_seconds == 0.25
+    assert settings.sse_keepalive_seconds == 10.0
 
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:
