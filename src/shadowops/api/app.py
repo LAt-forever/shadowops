@@ -11,8 +11,10 @@ from sqlalchemy.orm import sessionmaker
 
 from shadowops import __version__
 from shadowops.api.routes.health import router as health_router
+from shadowops.api.routes.run_events import router as run_events_router
 from shadowops.api.routes.runs import router as runs_router
 from shadowops.application.readiness import ReadinessService
+from shadowops.application.run_timeline import RunTimelineService
 from shadowops.application.runs import RunService
 from shadowops.config import get_settings
 from shadowops.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
@@ -24,6 +26,7 @@ def create_app(
     readiness_service: ReadinessService | None = None,
     *,
     run_service: RunService | None = None,
+    timeline_service: RunTimelineService | None = None,
 ) -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -52,6 +55,9 @@ def create_app(
         if run_service is None:
             session_factory = sessionmaker(bind=engine, expire_on_commit=False)
             run_service = RunService(lambda: SqlAlchemyUnitOfWork(session_factory))
+        if timeline_service is None:
+            session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+            timeline_service = RunTimelineService(lambda: SqlAlchemyUnitOfWork(session_factory))
 
         def close_default_dependencies() -> None:
             try:
@@ -72,8 +78,12 @@ def create_app(
     application = FastAPI(title="ShadowOps", version=__version__, lifespan=lifespan)
     application.state.readiness_service = readiness_service
     application.state.run_service = run_service
+    application.state.timeline_service = timeline_service
+    application.state.sse_poll_interval_seconds = settings.sse_poll_interval_seconds
+    application.state.sse_keepalive_seconds = settings.sse_keepalive_seconds
     application.include_router(health_router)
     application.include_router(runs_router)
+    application.include_router(run_events_router)
     structlog.get_logger(__name__).info(
         "service_configured",
         service="api",

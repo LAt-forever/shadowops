@@ -23,6 +23,8 @@ def test_settings_use_safe_local_defaults() -> None:
     assert settings.reconcile_interval_seconds == 2.0
     assert settings.recovery_stale_after_seconds == 10.0
     assert settings.recovery_max_attempts == 5
+    assert settings.sse_poll_interval_seconds == 0.25
+    assert settings.sse_keepalive_seconds == 10.0
 
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:

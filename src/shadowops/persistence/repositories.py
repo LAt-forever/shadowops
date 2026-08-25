@@ -199,6 +199,30 @@ class SqlAlchemyRunStepRepository:
             )
         )
 
+    def list_for_run(self, run_id: UUID) -> list[RunStep]:
+        models = self._session.scalars(
+            select(RunStepModel)
+            .where(RunStepModel.run_id == run_id)
+            .order_by(
+                RunStepModel.resulting_run_version.asc().nulls_last(),
+                RunStepModel.started_at,
+                RunStepModel.id,
+            )
+        ).all()
+        return [_to_step(model) for model in models]
+
+    def get_current(self, run_id: UUID) -> RunStep | None:
+        model = self._session.scalar(
+            select(RunStepModel)
+            .where(
+                RunStepModel.run_id == run_id,
+                RunStepModel.status == StepStatus.RUNNING.value,
+            )
+            .order_by(RunStepModel.started_at.desc(), RunStepModel.id.desc())
+            .limit(1)
+        )
+        return None if model is None else _to_step(model)
+
     def claim(self, candidate: RunStep) -> RunStep | None:
         model = self._session.scalar(
             insert(RunStepModel)

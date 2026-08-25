@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from shadowops.domain.runs import RunState
+from shadowops.domain.runs import RunState, StepStatus
 
 
 class DiffMode(StrEnum):
@@ -63,3 +63,39 @@ class AuditRunViewV1(BaseModel):
     updated_at: datetime | None = None
     completed_at: datetime | None = None
     links: dict[str, str] = Field(default_factory=dict)
+
+
+class RunTimelineEventV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    state: RunState
+    at: datetime
+    step_key: str | None = None
+    attempt: int | None = Field(default=None, ge=1)
+    status: StepStatus | None = None
+    handler_version: str | None = None
+    error_code: str | None = None
+
+
+class RunStepViewV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_key: str
+    attempt: int = Field(ge=1)
+    status: StepStatus
+    handler_version: str
+    started_at: datetime
+    heartbeat_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+
+
+class RunTimelineViewV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1.0"
+    run_id: UUID
+    run_version: int = Field(ge=1)
+    terminal: bool
+    events: list[RunTimelineEventV1]
+    current_step: RunStepViewV1 | None = None

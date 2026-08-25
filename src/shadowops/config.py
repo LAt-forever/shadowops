@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     reconcile_interval_seconds: float = 2.0
     recovery_stale_after_seconds: float = 10.0
     recovery_max_attempts: int = 5
+    sse_poll_interval_seconds: float = 0.25
+    sse_keepalive_seconds: float = 10.0
 
 
 @lru_cache
