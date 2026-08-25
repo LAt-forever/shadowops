@@ -18,3 +18,14 @@ class InvalidStateTransition(DomainError):
         source_value = getattr(source, "value", str(source))
         target_value = getattr(target, "value", str(target))
         super().__init__(f"Cannot transition audit run from {source_value} to {target_value}")
+
+
+class OptimisticConcurrencyError(DomainError):
+    """Raised when a stale writer attempts to update an aggregate."""
+
+    code = "OPTIMISTIC_CONCURRENCY_CONFLICT"
+
+    def __init__(self, aggregate_id: Any, expected_version: int) -> None:
+        super().__init__(
+            f"Aggregate {aggregate_id} is no longer at expected version {expected_version}"
+        )

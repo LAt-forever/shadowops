@@ -58,4 +58,3 @@ def test_terminal_state_cannot_be_left(terminal: RunState) -> None:
 
     with pytest.raises(InvalidStateTransition):
         run.transition(RunState.DISCOVERING, now=now + timedelta(seconds=1))
-
