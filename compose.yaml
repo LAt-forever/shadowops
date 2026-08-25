@@ -55,7 +55,14 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    command: ["celery", "-A", "shadowops.worker.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    command:
+      - celery
+      - -A
+      - shadowops.worker.celery_app:celery_app
+      - worker
+      - --beat
+      - --schedule=/tmp/shadowops-celerybeat-schedule
+      - --loglevel=INFO
     environment: *shadowops-environment
     depends_on:
       control-postgres:
