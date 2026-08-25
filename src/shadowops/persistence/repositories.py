@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from shadowops.domain.runs import (
     OutboxEvent,
     RunState,
     RunStep,
+    StepStatus,
 )
 from shadowops.persistence.models import AuditRunModel, OutboxEventModel, RunStepModel
 
@@ -54,6 +55,30 @@ def _to_event(model: OutboxEventModel) -> OutboxEvent:
         publish_attempts=model.publish_attempts,
         last_error=model.last_error,
         created_at=model.created_at,
+    )
+
+
+def _to_step(model: RunStepModel) -> RunStep:
+    return RunStep(
+        id=model.id,
+        run_id=model.run_id,
+        step_key=model.step_key,
+        from_state=RunState(model.from_state),
+        to_state=RunState(model.to_state),
+        generation=model.generation,
+        attempt=model.attempt,
+        status=StepStatus(model.status),
+        expected_run_version=model.expected_run_version,
+        resulting_run_version=model.resulting_run_version,
+        handler_version=model.handler_version,
+        worker_id=model.worker_id,
+        claim_token=model.claim_token,
+        heartbeat_at=model.heartbeat_at,
+        lease_expires_at=model.lease_expires_at,
+        started_at=model.started_at,
+        finished_at=model.finished_at,
+        error_code=model.error_code,
+        error_detail=model.error_detail,
     )
 
 
@@ -172,6 +197,101 @@ class SqlAlchemyRunStepRepository:
                 error_detail=step.error_detail,
             )
         )
+
+    def claim(self, candidate: RunStep) -> RunStep | None:
+        model = self._session.scalar(
+            insert(RunStepModel)
+            .values(
+                id=candidate.id,
+                run_id=candidate.run_id,
+                step_key=candidate.step_key,
+                from_state=candidate.from_state.value,
+                to_state=candidate.to_state.value,
+                generation=candidate.generation,
+                attempt=candidate.attempt,
+                status=candidate.status.value,
+                expected_run_version=candidate.expected_run_version,
+                resulting_run_version=candidate.resulting_run_version,
+                handler_version=candidate.handler_version,
+                worker_id=candidate.worker_id,
+                claim_token=candidate.claim_token,
+                heartbeat_at=candidate.heartbeat_at,
+                lease_expires_at=candidate.lease_expires_at,
+                started_at=candidate.started_at,
+                finished_at=candidate.finished_at,
+                error_code=candidate.error_code,
+                error_detail=candidate.error_detail,
+            )
+            .on_conflict_do_update(
+                constraint="uq_run_steps_run_step_key",
+                set_={
+                    "attempt": RunStepModel.attempt + 1,
+                    "status": StepStatus.RUNNING.value,
+                    "worker_id": candidate.worker_id,
+                    "claim_token": candidate.claim_token,
+                    "heartbeat_at": candidate.heartbeat_at,
+                    "lease_expires_at": candidate.lease_expires_at,
+                },
+                where=and_(
+                    RunStepModel.status == StepStatus.RUNNING.value,
+                    or_(
+                        RunStepModel.lease_expires_at.is_(None),
+                        RunStepModel.lease_expires_at <= candidate.started_at,
+                    ),
+                ),
+            )
+            .returning(RunStepModel)
+        )
+        return None if model is None else _to_step(model)
+
+    def heartbeat(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        heartbeat_at: datetime,
+        lease_expires_at: datetime,
+    ) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(RunStepModel)
+                .where(
+                    RunStepModel.id == step_id,
+                    RunStepModel.claim_token == claim_token,
+                    RunStepModel.status == StepStatus.RUNNING.value,
+                )
+                .values(heartbeat_at=heartbeat_at, lease_expires_at=lease_expires_at)
+            ),
+        )
+        return result.rowcount == 1
+
+    def complete(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        resulting_run_version: int,
+        finished_at: datetime,
+    ) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(RunStepModel)
+                .where(
+                    RunStepModel.id == step_id,
+                    RunStepModel.claim_token == claim_token,
+                    RunStepModel.status == StepStatus.RUNNING.value,
+                )
+                .values(
+                    status=StepStatus.SUCCEEDED.value,
+                    resulting_run_version=resulting_run_version,
+                    finished_at=finished_at,
+                    lease_expires_at=None,
+                )
+            ),
+        )
+        return result.rowcount == 1
 
 
 class SqlAlchemyOutboxRepository:

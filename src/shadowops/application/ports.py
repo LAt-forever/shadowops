@@ -23,6 +23,26 @@ class RunRepository(Protocol):
 class RunStepRepository(Protocol):
     def add(self, step: RunStep) -> None: ...
 
+    def claim(self, candidate: RunStep) -> RunStep | None: ...
+
+    def heartbeat(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        heartbeat_at: datetime,
+        lease_expires_at: datetime,
+    ) -> bool: ...
+
+    def complete(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        resulting_run_version: int,
+        finished_at: datetime,
+    ) -> bool: ...
+
 
 class OutboxRepository(Protocol):
     def add(self, event: OutboxEvent) -> None: ...

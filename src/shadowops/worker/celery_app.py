@@ -12,12 +12,13 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
     """Create a worker that uses Redis only for task delivery."""
     resolved = settings or get_settings()
     configure_logging(resolved.log_level)
-    application = Celery("shadowops", broker=resolved.redis_url)
+    application = Celery("shadowops", broker=resolved.redis_url, include=["shadowops.worker.tasks"])
     application.conf.update(
         result_backend=None,
         task_serializer="json",
         accept_content=["json"],
         task_acks_late=True,
+        task_reject_on_worker_lost=True,
         worker_prefetch_multiplier=1,
         timezone="UTC",
         enable_utc=True,

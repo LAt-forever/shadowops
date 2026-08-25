@@ -12,9 +12,11 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.task_serializer == "json"
     assert application.conf.accept_content == ["json"]
     assert application.conf.task_acks_late is True
+    assert application.conf.task_reject_on_worker_lost is True
     assert application.conf.worker_prefetch_multiplier == 1
     assert application.conf.timezone == "UTC"
     assert application.conf.enable_utc is True
     assert application.conf.broker_connection_retry_on_startup is True
     assert application.conf.worker_hijack_root_logger is False
     assert application.conf.worker_cancel_long_running_tasks_on_connection_loss is True
+    assert "shadowops.worker.tasks" in application.conf.include

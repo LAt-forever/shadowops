@@ -47,3 +47,12 @@ class RunNotFoundError(DomainError):
 
     def __init__(self, run_id: Any) -> None:
         super().__init__(f"Audit run {run_id} was not found")
+
+
+class ClaimLostError(DomainError):
+    """Raised when an expired worker attempts to mutate a reclaimed step."""
+
+    code = "STEP_CLAIM_LOST"
+
+    def __init__(self, step_id: Any) -> None:
+        super().__init__(f"Run step {step_id} is no longer owned by this claim")
