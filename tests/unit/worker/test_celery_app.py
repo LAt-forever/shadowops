@@ -20,3 +20,8 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
     assert application.conf.worker_hijack_root_logger is False
     assert application.conf.worker_cancel_long_running_tasks_on_connection_loss is True
     assert "shadowops.worker.tasks" in application.conf.include
+    assert application.conf.shadowops_outbox_batch_size == 50
+    assert application.conf.beat_schedule["dispatch-outbox"] == {
+        "task": "shadowops.maintenance.dispatch_outbox",
+        "schedule": 0.5,
+    }

@@ -5,7 +5,14 @@ from uuid import UUID
 
 from shadowops.domain.errors import ClaimLostError
 from shadowops.worker.celery_app import celery_app
-from shadowops.worker.runtime import get_execution_service
+from shadowops.worker.runtime import get_execution_service, get_outbox_dispatcher
+
+
+@celery_app.task(name="shadowops.maintenance.dispatch_outbox")  # type: ignore[untyped-decorator]
+def dispatch_outbox() -> dict[str, int]:
+    settings = celery_app.conf
+    limit = int(settings.get("shadowops_outbox_batch_size", 50))
+    return {"published": get_outbox_dispatcher().dispatch_batch(limit=limit)}
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]

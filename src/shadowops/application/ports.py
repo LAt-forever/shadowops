@@ -51,6 +51,10 @@ class OutboxRepository(Protocol):
 
     def lock_unpublished(self, *, now: datetime, limit: int) -> list[OutboxEvent]: ...
 
+    def mark_published(self, event_id: UUID, *, published_at: datetime) -> bool: ...
+
+    def mark_failed(self, event_id: UUID, *, error: str, available_at: datetime) -> bool: ...
+
 
 class UnitOfWork(Protocol):
     @property

@@ -25,6 +25,13 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         broker_connection_retry_on_startup=True,
         worker_hijack_root_logger=False,
         worker_cancel_long_running_tasks_on_connection_loss=True,
+        shadowops_outbox_batch_size=resolved.outbox_batch_size,
+        beat_schedule={
+            "dispatch-outbox": {
+                "task": "shadowops.maintenance.dispatch_outbox",
+                "schedule": resolved.outbox_poll_interval_seconds,
+            }
+        },
     )
     structlog.get_logger(__name__).info(
         "service_configured",

@@ -330,3 +330,39 @@ class SqlAlchemyOutboxRepository:
             .with_for_update(skip_locked=True)
         ).all()
         return [_to_event(model) for model in models]
+
+    def mark_published(self, event_id: UUID, *, published_at: datetime) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(OutboxEventModel)
+                .where(
+                    OutboxEventModel.id == event_id,
+                    OutboxEventModel.published_at.is_(None),
+                )
+                .values(
+                    published_at=published_at,
+                    publish_attempts=OutboxEventModel.publish_attempts + 1,
+                    last_error=None,
+                )
+            ),
+        )
+        return result.rowcount == 1
+
+    def mark_failed(self, event_id: UUID, *, error: str, available_at: datetime) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(OutboxEventModel)
+                .where(
+                    OutboxEventModel.id == event_id,
+                    OutboxEventModel.published_at.is_(None),
+                )
+                .values(
+                    available_at=available_at,
+                    publish_attempts=OutboxEventModel.publish_attempts + 1,
+                    last_error=error,
+                )
+            ),
+        )
+        return result.rowcount == 1

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     health_read_timeout_seconds: float = 2.0
     health_pool_timeout_seconds: float = 2.0
     health_statement_timeout_ms: int = 2_000
+    outbox_batch_size: int = 50
+    outbox_poll_interval_seconds: float = 0.5
+    outbox_retry_base_seconds: float = 1.0
+    outbox_retry_max_seconds: float = 30.0
 
 
 @lru_cache
