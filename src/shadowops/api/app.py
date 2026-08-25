@@ -7,16 +7,24 @@ import redis
 import structlog
 from fastapi import FastAPI
 from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from shadowops import __version__
 from shadowops.api.routes.health import router as health_router
+from shadowops.api.routes.runs import router as runs_router
 from shadowops.application.readiness import ReadinessService
+from shadowops.application.runs import RunService
 from shadowops.config import get_settings
 from shadowops.infrastructure.health import DatabaseHealthCheck, RedisHealthCheck
 from shadowops.observability.logging import configure_logging
+from shadowops.persistence.uow import SqlAlchemyUnitOfWork
 
 
-def create_app(readiness_service: ReadinessService | None = None) -> FastAPI:
+def create_app(
+    readiness_service: ReadinessService | None = None,
+    *,
+    run_service: RunService | None = None,
+) -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
     close_dependencies: Callable[[], None] | None = None
@@ -41,6 +49,9 @@ def create_app(readiness_service: ReadinessService | None = None) -> FastAPI:
                 "redis": RedisHealthCheck(redis_client),
             }
         )
+        if run_service is None:
+            session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+            run_service = RunService(lambda: SqlAlchemyUnitOfWork(session_factory))
 
         def close_default_dependencies() -> None:
             try:
@@ -60,7 +71,9 @@ def create_app(readiness_service: ReadinessService | None = None) -> FastAPI:
 
     application = FastAPI(title="ShadowOps", version=__version__, lifespan=lifespan)
     application.state.readiness_service = readiness_service
+    application.state.run_service = run_service
     application.include_router(health_router)
+    application.include_router(runs_router)
     structlog.get_logger(__name__).info(
         "service_configured",
         service="api",

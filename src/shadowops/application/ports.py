@@ -1,7 +1,8 @@
 """Application-facing persistence ports."""
 
 from datetime import datetime
-from typing import Protocol
+from types import TracebackType
+from typing import Protocol, Self
 from uuid import UUID
 
 from shadowops.domain.runs import AuditRun, OutboxEvent, RunStep
@@ -10,7 +11,11 @@ from shadowops.domain.runs import AuditRun, OutboxEvent, RunStep
 class RunRepository(Protocol):
     def add(self, run: AuditRun) -> None: ...
 
+    def add_if_idempotency_absent(self, run: AuditRun) -> bool: ...
+
     def get(self, run_id: UUID) -> AuditRun | None: ...
+
+    def get_by_idempotency_key(self, key: str) -> AuditRun | None: ...
 
     def save(self, run: AuditRun, *, expected_version: int) -> None: ...
 
@@ -28,9 +33,23 @@ class OutboxRepository(Protocol):
 
 
 class UnitOfWork(Protocol):
-    runs: RunRepository
-    steps: RunStepRepository
-    outbox: OutboxRepository
+    @property
+    def runs(self) -> RunRepository: ...
+
+    @property
+    def steps(self) -> RunStepRepository: ...
+
+    @property
+    def outbox(self) -> OutboxRepository: ...
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None: ...
 
     def commit(self) -> None: ...
 

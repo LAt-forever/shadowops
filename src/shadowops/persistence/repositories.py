@@ -5,6 +5,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -83,8 +84,41 @@ class SqlAlchemyRunRepository:
             )
         )
 
+    def add_if_idempotency_absent(self, run: AuditRun) -> bool:
+        inserted_id = self._session.scalar(
+            insert(AuditRunModel)
+            .values(
+                id=run.id,
+                repository_path=run.repository_path,
+                diff_mode=run.diff_mode,
+                base_ref=run.base_ref,
+                head_ref=run.head_ref,
+                idempotency_key=run.idempotency_key,
+                request_fingerprint=run.request_fingerprint,
+                state=run.state.value,
+                version=run.version,
+                cleanup_status=run.cleanup_status.value,
+                heartbeat_at=run.heartbeat_at,
+                cancel_requested_at=run.cancel_requested_at,
+                failure_code=run.failure_code,
+                failure_detail=run.failure_detail,
+                created_at=run.created_at or run.updated_at,
+                updated_at=run.updated_at,
+                completed_at=run.completed_at,
+            )
+            .on_conflict_do_nothing(index_elements=[AuditRunModel.idempotency_key])
+            .returning(AuditRunModel.id)
+        )
+        return inserted_id is not None
+
     def get(self, run_id: UUID) -> AuditRun | None:
         model = self._session.get(AuditRunModel, run_id)
+        return None if model is None else _to_run(model)
+
+    def get_by_idempotency_key(self, key: str) -> AuditRun | None:
+        model = self._session.scalar(
+            select(AuditRunModel).where(AuditRunModel.idempotency_key == key)
+        )
         return None if model is None else _to_run(model)
 
     def save(self, run: AuditRun, *, expected_version: int) -> None:

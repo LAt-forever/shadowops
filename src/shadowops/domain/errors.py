@@ -29,3 +29,21 @@ class OptimisticConcurrencyError(DomainError):
         super().__init__(
             f"Aggregate {aggregate_id} is no longer at expected version {expected_version}"
         )
+
+
+class IdempotencyConflictError(DomainError):
+    """Raised when a key is reused for a different normalized request."""
+
+    code = "IDEMPOTENCY_CONFLICT"
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"Idempotency key {key!r} is already bound to another request")
+
+
+class RunNotFoundError(DomainError):
+    """Raised when a requested audit run does not exist."""
+
+    code = "RUN_NOT_FOUND"
+
+    def __init__(self, run_id: Any) -> None:
+        super().__init__(f"Audit run {run_id} was not found")
