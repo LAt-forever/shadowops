@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -7,7 +8,7 @@ from uuid import UUID, uuid4
 import httpx
 
 PROJECT_ROOT = Path(__file__).parents[2]
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = os.environ.get("SHADOWOPS_API_BASE", "http://127.0.0.1:8000")
 
 
 def _compose(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -159,3 +160,20 @@ def test_cancel_request_is_honoured_after_worker_restart() -> None:
     assert terminal["version"] == 2
     timeline = _request("GET", f"/api/v1/runs/{run['id']}/timeline").json()
     assert [event["state"] for event in timeline["events"]] == ["QUEUED", "CANCELLED"]
+
+
+def test_missing_repository_becomes_a_stable_failed_timeline() -> None:
+    response = _request(
+        "POST",
+        "/api/v1/runs",
+        headers={"Idempotency-Key": f"e2e-missing-repository-{uuid4()}"},
+        json={"repository_path": "projects/not-present"},
+    )
+    assert response.status_code == 202
+
+    failed = _wait_for_state(response.json()["id"], "FAILED")
+
+    assert failed["version"] == 2
+    timeline = _request("GET", f"/api/v1/runs/{failed['id']}/timeline").json()
+    assert [event["state"] for event in timeline["events"]] == ["QUEUED", "FAILED"]
+    assert timeline["events"][-1]["error_code"] == "REPOSITORY_NOT_FOUND"

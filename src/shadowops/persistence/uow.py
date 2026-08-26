@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shadowops.persistence.repositories import (
     SqlAlchemyOutboxRepository,
+    SqlAlchemyRepoSnapshotRepository,
+    SqlAlchemyRevisionGraphRepository,
     SqlAlchemyRunRepository,
     SqlAlchemyRunStepRepository,
 )
@@ -22,6 +24,8 @@ class SqlAlchemyUnitOfWork:
         self.runs = SqlAlchemyRunRepository(self.session)
         self.steps = SqlAlchemyRunStepRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
+        self.snapshots = SqlAlchemyRepoSnapshotRepository(self.session)
+        self.revision_graphs = SqlAlchemyRevisionGraphRepository(self.session)
         self._committed = False
         return self
 

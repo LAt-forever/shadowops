@@ -2,13 +2,19 @@
 
 from datetime import timedelta
 from functools import lru_cache
+from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from shadowops.application.discovery import DiscoveryStageHandler, NoOpStageHandler, StageHandler
 from shadowops.application.run_execution import RunExecutionService
 from shadowops.config import get_settings
+from shadowops.domain.runs import RunState
 from shadowops.persistence.database import create_control_engine, create_session_factory
 from shadowops.persistence.uow import SqlAlchemyUnitOfWork
+from shadowops.repository.alembic import AlembicDiscoveryService
+from shadowops.repository.contracts import RepoSnapshotV1
+from shadowops.repository.snapshot import SnapshotService
 from shadowops.worker.outbox import CeleryEventPublisher, OutboxDispatcher
 from shadowops.worker.reconciler import RunReconciler
 
@@ -24,6 +30,34 @@ def get_worker_session_factory() -> sessionmaker[Session]:
 def get_execution_service() -> RunExecutionService:
     sessions = get_worker_session_factory()
     return RunExecutionService(lambda: SqlAlchemyUnitOfWork(sessions))
+
+
+@lru_cache
+def get_stage_handlers() -> dict[RunState, StageHandler]:
+    settings = get_settings()
+    sessions = get_worker_session_factory()
+
+    def uow_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(sessions)
+
+    def snapshot_lookup(snapshot_id: UUID) -> RepoSnapshotV1 | None:
+        with uow_factory() as uow:
+            return uow.snapshots.get(snapshot_id)
+
+    discovery = DiscoveryStageHandler(
+        uow_factory,
+        SnapshotService(
+            settings.repo_root,
+            settings.artifact_root,
+            max_files=settings.snapshot_max_files,
+            max_file_bytes=settings.snapshot_max_file_bytes,
+            max_total_bytes=settings.snapshot_max_total_bytes,
+            read_chunk_bytes=settings.snapshot_read_chunk_bytes,
+        ),
+        AlembicDiscoveryService(settings.artifact_root, snapshot_lookup),
+    )
+    noop = NoOpStageHandler()
+    return {state: discovery if state is RunState.DISCOVERING else noop for state in RunState}
 
 
 @lru_cache

@@ -6,6 +6,7 @@ from typing import Protocol, Self
 from uuid import UUID
 
 from shadowops.domain.runs import AuditRun, OutboxEvent, RunState, RunStep
+from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
 
 
 class RunRepository(Protocol):
@@ -48,6 +49,17 @@ class RunStepRepository(Protocol):
         final_state: RunState,
     ) -> bool: ...
 
+    def fail(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        resulting_run_version: int,
+        finished_at: datetime,
+        error_code: str,
+        error_detail: str,
+    ) -> bool: ...
+
 
 class OutboxRepository(Protocol):
     def add(self, event: OutboxEvent) -> None: ...
@@ -71,6 +83,20 @@ class OutboxRepository(Protocol):
     ) -> bool: ...
 
 
+class RepoSnapshotRepository(Protocol):
+    def get(self, snapshot_id: UUID) -> RepoSnapshotV1 | None: ...
+
+    def get_for_run(self, run_id: UUID) -> RepoSnapshotV1 | None: ...
+
+    def create_or_get(self, snapshot: RepoSnapshotV1) -> RepoSnapshotV1: ...
+
+
+class RevisionGraphRepository(Protocol):
+    def get_for_run(self, run_id: UUID) -> RevisionGraphV1 | None: ...
+
+    def create_or_get(self, graph: RevisionGraphV1) -> RevisionGraphV1: ...
+
+
 class UnitOfWork(Protocol):
     @property
     def runs(self) -> RunRepository: ...
@@ -80,6 +106,12 @@ class UnitOfWork(Protocol):
 
     @property
     def outbox(self) -> OutboxRepository: ...
+
+    @property
+    def snapshots(self) -> RepoSnapshotRepository: ...
+
+    @property
+    def revision_graphs(self) -> RevisionGraphRepository: ...
 
     def __enter__(self) -> Self: ...
 

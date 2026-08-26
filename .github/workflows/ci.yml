@@ -57,6 +57,8 @@ jobs:
           uv sync --frozen
       - name: Validate Compose
         run: docker compose -f compose.yaml -f compose.test.yaml config --quiet
+      - name: Initialize deterministic fixture repositories
+        run: bash scripts/init-fixture-repositories.sh
       - name: Start services
         run: docker compose -f compose.yaml -f compose.test.yaml up --build --detach --wait
       - name: Upgrade control database

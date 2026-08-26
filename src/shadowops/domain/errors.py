@@ -9,6 +9,26 @@ class DomainError(Exception):
     code = "DOMAIN_ERROR"
 
 
+class RepositoryInputError(DomainError):
+    """A stable, non-sensitive failure at the repository trust boundary."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = code
+        super().__init__(detail)
+
+
+class ImmutableResultConflict(RepositoryInputError):
+    """An idempotent result key was reused for different immutable content."""
+
+    code = "SNAPSHOT_INTEGRITY_FAILED"
+
+    def __init__(self, result: str) -> None:
+        super().__init__(
+            self.code,
+            f"Existing {result} does not match the computed immutable result",
+        )
+
+
 class InvalidStateTransition(DomainError):
     """Raised when a run attempts to leave the declared lifecycle graph."""
 

@@ -96,6 +96,28 @@ class MemoryStepRepository:
         step.lease_expires_at = None
         return True
 
+    def fail(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        resulting_run_version: int,
+        finished_at: datetime,
+        error_code: str,
+        error_detail: str,
+    ) -> bool:
+        step = next(item for item in self._store.steps.values() if item.id == step_id)
+        if step.claim_token != claim_token or step.status is not StepStatus.RUNNING:
+            return False
+        step.status = StepStatus.FAILED
+        step.to_state = RunState.FAILED
+        step.resulting_run_version = resulting_run_version
+        step.finished_at = finished_at
+        step.lease_expires_at = None
+        step.error_code = error_code
+        step.error_detail = error_detail
+        return True
+
 
 class MemoryOutboxRepository:
     def __init__(self, store: MemoryStore) -> None:
@@ -257,4 +279,25 @@ def test_cancel_requested_during_execution_wins_at_finalize_checkpoint() -> None
 
     assert run.state is RunState.CANCELLED
     assert store.steps[claim.step_key].to_state is RunState.CANCELLED
+    assert len(store.events) == 1
+
+
+def test_fail_fences_step_and_terminates_run_without_next_event() -> None:
+    store = _store()
+    service = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN])
+    claim = service.claim(EVENT_ID, worker_id="worker-a")
+    assert claim is not None
+
+    run = service.fail(
+        claim,
+        error_code="REPOSITORY_NOT_FOUND",
+        error_detail="Repository was not found",
+    )
+
+    assert run.state is RunState.FAILED
+    assert run.version == 2
+    assert run.failure_code == "REPOSITORY_NOT_FOUND"
+    step = store.steps[claim.step_key]
+    assert step.status is StepStatus.FAILED
+    assert step.error_code == "REPOSITORY_NOT_FOUND"
     assert len(store.events) == 1

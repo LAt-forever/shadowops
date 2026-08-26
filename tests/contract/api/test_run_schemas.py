@@ -44,6 +44,14 @@ def test_create_run_rejects_unknown_fields() -> None:
         CreateAuditRunRequestV1(repository_path="projects/demo", shell_command="rm -rf repo")
 
 
+@pytest.mark.parametrize(
+    "repository_path", ["/projects/demo", "../demo", "projects//demo", "projects/./demo"]
+)
+def test_create_run_rejects_unsafe_repository_paths(repository_path: str) -> None:
+    with pytest.raises(ValidationError):
+        CreateAuditRunRequestV1(repository_path=repository_path)
+
+
 def test_cancel_requires_a_positive_expected_version() -> None:
     with pytest.raises(ValidationError):
         CancelAuditRunRequestV1(expected_version=0)
@@ -59,7 +67,7 @@ def test_run_view_exposes_versioned_walking_skeleton_identity() -> None:
         "id": str(run_id),
         "state": "QUEUED",
         "version": 1,
-        "execution_profile": "m1.noop.v1",
+        "execution_profile": "m2.secure-discovery.v1",
         "cancel_requested_at": None,
         "created_at": None,
         "updated_at": None,

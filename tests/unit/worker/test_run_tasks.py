@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from shadowops.domain.errors import RepositoryInputError
 from shadowops.domain.runs import AuditRun, RunState, RunStep, StepStatus
 from shadowops.worker import tasks
 
@@ -15,12 +16,23 @@ class FakeExecutionService:
     def __init__(self, claim: RunStep | None) -> None:
         self._claim = claim
         self.finalized = False
+        self.failed = False
 
     def claim(self, event_id: UUID, *, worker_id: str) -> RunStep | None:
         return self._claim
 
     def heartbeat(self, claim: RunStep) -> bool:
         return True
+
+    def get_run_for_claim(self, claim: RunStep) -> AuditRun:
+        return AuditRun(
+            id=RUN_ID,
+            state=RunState.QUEUED,
+            version=1,
+            repository_path="projects/demo",
+            created_at=NOW,
+            updated_at=NOW,
+        )
 
     def finalize(self, claim: RunStep) -> AuditRun:
         self.finalized = True
@@ -31,6 +43,32 @@ class FakeExecutionService:
             created_at=NOW,
             updated_at=NOW,
         )
+
+    def fail(self, claim: RunStep, *, error_code: str, error_detail: str) -> AuditRun:
+        self.failed = True
+        return AuditRun(
+            id=RUN_ID,
+            state=RunState.FAILED,
+            version=2,
+            failure_code=error_code,
+            failure_detail=error_detail,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+
+
+class FakeHandler:
+    def __init__(self) -> None:
+        self.executed = False
+
+    def execute(self, run: AuditRun, *, checkpoint) -> None:
+        self.executed = True
+        checkpoint()
+
+
+class FailingHandler:
+    def execute(self, run: AuditRun, *, checkpoint) -> None:
+        raise RepositoryInputError("REPOSITORY_NOT_FOUND", "Repository was not found")
 
 
 def _claim() -> RunStep:
@@ -63,7 +101,9 @@ def test_process_event_reports_ignored_when_no_step_is_claimed(monkeypatch) -> N
 
 def test_process_event_finalizes_the_claimed_noop_stage(monkeypatch) -> None:
     service = FakeExecutionService(_claim())
+    handler = FakeHandler()
     monkeypatch.setattr(tasks, "get_execution_service", lambda: service)
+    monkeypatch.setattr(tasks, "get_stage_handlers", lambda: {RunState.DISCOVERING: handler})
 
     result = tasks.process_run_event.run(str(EVENT_ID))
 
@@ -75,3 +115,24 @@ def test_process_event_finalizes_the_claimed_noop_stage(monkeypatch) -> None:
         "version": 2,
     }
     assert service.finalized is True
+    assert handler.executed is True
+
+
+def test_process_event_turns_trusted_input_error_into_reliable_failure(monkeypatch) -> None:
+    service = FakeExecutionService(_claim())
+    monkeypatch.setattr(tasks, "get_execution_service", lambda: service)
+    monkeypatch.setattr(
+        tasks, "get_stage_handlers", lambda: {RunState.DISCOVERING: FailingHandler()}
+    )
+
+    result = tasks.process_run_event.run(str(EVENT_ID))
+
+    assert result == {
+        "status": "failed",
+        "event_id": str(EVENT_ID),
+        "run_id": str(RUN_ID),
+        "state": "FAILED",
+        "version": 2,
+        "error_code": "REPOSITORY_NOT_FOUND",
+    }
+    assert service.failed is True

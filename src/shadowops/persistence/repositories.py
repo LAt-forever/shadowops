@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from shadowops.domain.errors import OptimisticConcurrencyError
+from shadowops.domain.errors import ImmutableResultConflict, OptimisticConcurrencyError
 from shadowops.domain.runs import (
     TERMINAL_STATES,
     AuditRun,
@@ -19,7 +19,20 @@ from shadowops.domain.runs import (
     RunStep,
     StepStatus,
 )
-from shadowops.persistence.models import AuditRunModel, OutboxEventModel, RunStepModel
+from shadowops.persistence.models import (
+    AuditRunModel,
+    OutboxEventModel,
+    RepoSnapshotModel,
+    RevisionGraphModel,
+    RunStepModel,
+)
+from shadowops.repository.contracts import (
+    GitChangeV1,
+    RepoSnapshotV1,
+    RevisionGraphV1,
+    RevisionNodeV1,
+    UnsupportedReasonV1,
+)
 
 
 def _to_run(model: AuditRunModel) -> AuditRun:
@@ -324,6 +337,38 @@ class SqlAlchemyRunStepRepository:
         )
         return result.rowcount == 1
 
+    def fail(
+        self,
+        step_id: UUID,
+        *,
+        claim_token: UUID,
+        resulting_run_version: int,
+        finished_at: datetime,
+        error_code: str,
+        error_detail: str,
+    ) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(RunStepModel)
+                .where(
+                    RunStepModel.id == step_id,
+                    RunStepModel.claim_token == claim_token,
+                    RunStepModel.status == StepStatus.RUNNING.value,
+                )
+                .values(
+                    status=StepStatus.FAILED.value,
+                    to_state=RunState.FAILED.value,
+                    resulting_run_version=resulting_run_version,
+                    finished_at=finished_at,
+                    lease_expires_at=None,
+                    error_code=error_code,
+                    error_detail=error_detail,
+                )
+            ),
+        )
+        return result.rowcount == 1
+
 
 class SqlAlchemyOutboxRepository:
     def __init__(self, session: Session) -> None:
@@ -456,3 +501,141 @@ class SqlAlchemyOutboxRepository:
             ),
         )
         return result.rowcount == 1
+
+
+def _to_snapshot(model: RepoSnapshotModel) -> RepoSnapshotV1:
+    return RepoSnapshotV1.model_validate(
+        {
+            "id": model.id,
+            "run_id": model.run_id,
+            "schema_version": model.schema_version,
+            "source_path_hash": model.source_path_hash,
+            "diff_mode": model.diff_mode,
+            "base_commit": model.base_commit,
+            "head_commit": model.head_commit,
+            "dirty_diff_hash": model.dirty_diff_hash,
+            "content_hash": model.content_hash,
+            "artifact_uri": model.artifact_uri,
+            "file_count": model.file_count,
+            "total_bytes": model.total_bytes,
+            "changed_paths": tuple(
+                GitChangeV1.model_validate(item) for item in model.changed_paths
+            ),
+            "created_at": model.created_at,
+        }
+    )
+
+
+class SqlAlchemyRepoSnapshotRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, snapshot_id: UUID) -> RepoSnapshotV1 | None:
+        model = self._session.get(RepoSnapshotModel, snapshot_id)
+        return None if model is None else _to_snapshot(model)
+
+    def get_for_run(self, run_id: UUID) -> RepoSnapshotV1 | None:
+        model = self._session.scalar(
+            select(RepoSnapshotModel).where(RepoSnapshotModel.run_id == run_id)
+        )
+        return None if model is None else _to_snapshot(model)
+
+    def create_or_get(self, snapshot: RepoSnapshotV1) -> RepoSnapshotV1:
+        self._session.execute(
+            insert(RepoSnapshotModel)
+            .values(
+                id=snapshot.id,
+                run_id=snapshot.run_id,
+                schema_version=snapshot.schema_version,
+                source_path_hash=snapshot.source_path_hash,
+                diff_mode=snapshot.diff_mode,
+                base_commit=snapshot.base_commit,
+                head_commit=snapshot.head_commit,
+                dirty_diff_hash=snapshot.dirty_diff_hash,
+                content_hash=snapshot.content_hash,
+                artifact_uri=snapshot.artifact_uri,
+                file_count=snapshot.file_count,
+                total_bytes=snapshot.total_bytes,
+                changed_paths=[item.model_dump(mode="json") for item in snapshot.changed_paths],
+                created_at=snapshot.created_at,
+            )
+            .on_conflict_do_nothing(index_elements=[RepoSnapshotModel.run_id])
+        )
+        existing = self.get_for_run(snapshot.run_id)
+        if existing is None:
+            raise RuntimeError("Snapshot upsert did not expose a durable result")
+        if existing.model_dump(exclude={"id", "created_at"}) != snapshot.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("repository snapshot")
+        return existing
+
+
+def _to_graph(model: RevisionGraphModel, snapshot: RepoSnapshotV1) -> RevisionGraphV1:
+    return RevisionGraphV1.model_validate(
+        {
+            "id": model.id,
+            "run_id": model.run_id,
+            "snapshot_id": model.snapshot_id,
+            "schema_version": model.schema_version,
+            "diff_mode": snapshot.diff_mode,
+            "base_commit": snapshot.base_commit,
+            "head_commit": snapshot.head_commit,
+            "nodes": tuple(RevisionNodeV1.model_validate(item) for item in model.nodes),
+            "heads": tuple(model.heads),
+            "baseline_revision": model.baseline_revision,
+            "target_chain": tuple(model.target_chain),
+            "changed_revisions": tuple(model.changed_revisions),
+            "supported": model.supported,
+            "unsupported_reasons": tuple(
+                UnsupportedReasonV1.model_validate(item) for item in model.unsupported_reasons
+            ),
+            "created_at": model.created_at,
+        }
+    )
+
+
+class SqlAlchemyRevisionGraphRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_for_run(self, run_id: UUID) -> RevisionGraphV1 | None:
+        model = self._session.scalar(
+            select(RevisionGraphModel).where(RevisionGraphModel.run_id == run_id)
+        )
+        if model is None:
+            return None
+        snapshot_model = self._session.get(RepoSnapshotModel, model.snapshot_id)
+        if snapshot_model is None:
+            raise RuntimeError("Revision graph references a missing snapshot")
+        return _to_graph(model, _to_snapshot(snapshot_model))
+
+    def create_or_get(self, graph: RevisionGraphV1) -> RevisionGraphV1:
+        self._session.execute(
+            insert(RevisionGraphModel)
+            .values(
+                id=graph.id,
+                run_id=graph.run_id,
+                snapshot_id=graph.snapshot_id,
+                schema_version=graph.schema_version,
+                supported=graph.supported,
+                nodes=[item.model_dump(mode="json") for item in graph.nodes],
+                heads=list(graph.heads),
+                baseline_revision=graph.baseline_revision,
+                target_chain=list(graph.target_chain),
+                changed_revisions=list(graph.changed_revisions),
+                unsupported_reasons=[
+                    item.model_dump(mode="json") for item in graph.unsupported_reasons
+                ],
+                created_at=graph.created_at,
+            )
+            .on_conflict_do_nothing(index_elements=[RevisionGraphModel.run_id])
+        )
+        existing = self.get_for_run(graph.run_id)
+        if existing is None:
+            raise RuntimeError("Revision graph upsert did not expose a durable result")
+        if existing.model_dump(exclude={"id", "created_at"}) != graph.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("revision graph")
+        return existing

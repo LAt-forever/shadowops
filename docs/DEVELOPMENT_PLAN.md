@@ -37,7 +37,7 @@
 
 **目标**：完成第一个真实价值切片：本地仓库输入可产生证据化静态报告。
 
-**交付**：允许根目录校验；Git selector 解析；安全快照与 hash；AST revision 解析；线性 revision chain；静态 finding schema；规则注册器；首批 10 条规则的最小可用版本；fixture repositories；JSON 静态报告。
+**交付**：拆成两个可审阅 PR。M2A 完成允许根目录校验、Git selector、安全快照与 hash、AST revision 解析、线性 revision chain 和持久化；M2B 完成静态 finding schema、4 条聚焦规则（破坏性 DDL、直接新增 NOT NULL、非并发索引、缺失/不可逆 downgrade）、fixture repositories 与 JSON 静态报告。
 
 **退出门槛**：安全加列与高风险 drop 两个 fixture 可端到端运行；路径穿越/symlink 逃逸被拒绝；宿主进程不 import fixture migration；多 head/动态 revision 产生明确的 unsupported/high-risk finding；每个 finding 带文件位置和 evidence id。
 

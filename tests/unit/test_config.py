@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import shadowops.config as config
 
 
@@ -25,6 +27,12 @@ def test_settings_use_safe_local_defaults() -> None:
     assert settings.recovery_max_attempts == 5
     assert settings.sse_poll_interval_seconds == 0.25
     assert settings.sse_keepalive_seconds == 10.0
+    assert settings.repo_root == Path("/repositories")
+    assert settings.artifact_root == Path("/var/lib/shadowops/artifacts")
+    assert settings.snapshot_max_files == 10_000
+    assert settings.snapshot_max_file_bytes == 5 * 1024 * 1024
+    assert settings.snapshot_max_total_bytes == 100 * 1024 * 1024
+    assert settings.snapshot_read_chunk_bytes == 1024 * 1024
 
 
 def test_environment_variables_override_defaults(monkeypatch) -> None:
