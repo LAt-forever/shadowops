@@ -238,7 +238,14 @@ class GitRepository:
         }
         try:
             return subprocess.run(
-                [*_GIT_PREFIX, "-C", str(self.path), *args],
+                [
+                    *_GIT_PREFIX,
+                    "-c",
+                    f"safe.directory={self.path}",
+                    "-C",
+                    str(self.path),
+                    *args,
+                ],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=30,
