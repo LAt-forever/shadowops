@@ -96,6 +96,22 @@ def _publish_event(event_id: str) -> None:
     )
 
 
+def _count_rows(table: str, run_id: str) -> int:
+    result = _compose(
+        "exec",
+        "-T",
+        "control-postgres",
+        "psql",
+        "-U",
+        "shadowops",
+        "-d",
+        "shadowops",
+        "-Atc",
+        f"SELECT COUNT(*) FROM {table} WHERE run_id = '{UUID(run_id)}'",
+    )
+    return int(result.stdout.strip())
+
+
 def test_run_completes_idempotently_and_survives_api_restart() -> None:
     request_key = f"e2e-completion-{uuid4()}"
     first = _create(request_key)
@@ -105,6 +121,23 @@ def test_run_completes_idempotently_and_survives_api_restart() -> None:
     completed = _wait_for_state(str(first["id"]), "COMPLETED")
     assert completed["version"] == 12
     report_before_restart = _request("GET", f"/api/v1/runs/{first['id']}/static-report").json()
+    plan_response = _request("GET", f"/api/v1/runs/{first['id']}/plan")
+    assert plan_response.status_code == 200
+    plan_before_restart = plan_response.json()
+    assert plan_before_restart["plan"]["schema_version"] == "1.0"
+    assert [step["capability"] for step in plan_before_restart["plan"]["steps"]] == [
+        "provision_shadow_db",
+        "upgrade_baseline",
+        "apply_target_migrations",
+        "load_test_data",
+        "run_smoke_checks",
+        "verify_rollback_roundtrip",
+        "collect_evidence",
+        "cleanup_shadow_environment",
+    ]
+    assert _count_rows("agent_invocations", str(first["id"])) == 1
+    assert _count_rows("agent_tool_calls", str(first["id"])) == 4
+    assert _count_rows("audit_plans", str(first["id"])) == 1
 
     timeline = _request("GET", f"/api/v1/runs/{first['id']}/timeline")
     assert timeline.status_code == 200
@@ -126,6 +159,7 @@ def test_run_completes_idempotently_and_survives_api_restart() -> None:
     assert (
         _request("GET", f"/api/v1/runs/{first['id']}/static-report").json() == report_before_restart
     )
+    assert _request("GET", f"/api/v1/runs/{first['id']}/plan").json() == plan_before_restart
 
 
 def test_queued_run_and_duplicate_messages_recover_after_worker_restart() -> None:
@@ -136,6 +170,9 @@ def test_queued_run_and_duplicate_messages_recover_after_worker_restart() -> Non
         pending_report = _request("GET", f"/api/v1/runs/{run['id']}/static-report")
         assert pending_report.status_code == 409
         assert pending_report.json()["detail"] == {"code": "STATIC_REPORT_NOT_READY"}
+        pending_plan = _request("GET", f"/api/v1/runs/{run['id']}/plan")
+        assert pending_plan.status_code == 409
+        assert pending_plan.json()["detail"] == {"code": "AUDIT_PLAN_NOT_READY"}
         event_id = _initial_event_id(str(run["id"]))
         assert event_id
         _publish_event(event_id)
@@ -147,6 +184,9 @@ def test_queued_run_and_duplicate_messages_recover_after_worker_restart() -> Non
     assert completed["version"] == 12
     timeline = _request("GET", f"/api/v1/runs/{run['id']}/timeline").json()
     assert len(timeline["events"]) == 12
+    assert _request("GET", f"/api/v1/runs/{run['id']}/plan").status_code == 200
+    assert _count_rows("agent_invocations", str(run["id"])) == 1
+    assert _count_rows("audit_plans", str(run["id"])) == 1
 
 
 def test_cancel_request_is_honoured_after_worker_restart() -> None:

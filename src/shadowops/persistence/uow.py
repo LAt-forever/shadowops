@@ -5,6 +5,7 @@ from types import TracebackType
 from sqlalchemy.orm import Session, sessionmaker
 
 from shadowops.persistence.repositories import (
+    SqlAlchemyAgentPlanningRepository,
     SqlAlchemyOutboxRepository,
     SqlAlchemyRepoSnapshotRepository,
     SqlAlchemyRevisionGraphRepository,
@@ -28,6 +29,7 @@ class SqlAlchemyUnitOfWork:
         self.snapshots = SqlAlchemyRepoSnapshotRepository(self.session)
         self.revision_graphs = SqlAlchemyRevisionGraphRepository(self.session)
         self.static_reports = SqlAlchemyStaticReportRepository(self.session)
+        self.agent_planning = SqlAlchemyAgentPlanningRepository(self.session)
         self._committed = False
         return self
 

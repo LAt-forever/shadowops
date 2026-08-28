@@ -3,9 +3,16 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
+from shadowops.agent.contracts import (
+    AuditPlanRecordV1,
+    AuditPlanV1,
+    CapabilityName,
+    PlanStepV1,
+)
 from shadowops.api.app import create_app
 from shadowops.application.readiness import ReadinessService
 from shadowops.domain.errors import (
+    AuditPlanNotReadyError,
     IdempotencyConflictError,
     RunNotFoundError,
     StaticReportNotReadyError,
@@ -67,6 +74,34 @@ class StubStaticReportService:
         )
 
 
+class StubPlanService:
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+
+    def get(self, *args: object, **kwargs: object) -> AuditPlanRecordV1:
+        if self._error is not None:
+            raise self._error
+        return AuditPlanRecordV1(
+            id=UUID("44444444-4444-4444-8444-444444444444"),
+            run_id=RUN_ID,
+            invocation_id=UUID("55555555-5555-4555-8555-555555555555"),
+            input_hash="c" * 64,
+            plan=AuditPlanV1(
+                objective="Audit migrations",
+                steps=(
+                    PlanStepV1(
+                        id="provision",
+                        capability=CapabilityName.PROVISION_SHADOW_DB,
+                        timeout_seconds=60,
+                        required=True,
+                        reason="Create isolated resources",
+                    ),
+                ),
+            ),
+            created_at=NOW,
+        )
+
+
 def _run() -> AuditRun:
     return AuditRun(
         id=RUN_ID,
@@ -83,12 +118,14 @@ def _run() -> AuditRun:
 def _client(
     service: StubRunService,
     report_service: StubStaticReportService | None = None,
+    plan_service: StubPlanService | None = None,
 ) -> TestClient:
     return TestClient(
         create_app(
             ReadinessService({}),
             run_service=service,
             static_report_service=report_service or StubStaticReportService(),
+            plan_service=plan_service or StubPlanService(),
         )
     )
 
@@ -117,6 +154,7 @@ def test_create_run_returns_accepted_resource_and_location() -> None:
         "events": f"/api/v1/runs/{RUN_ID}/events",
         "timeline": f"/api/v1/runs/{RUN_ID}/timeline",
         "static_report": f"/api/v1/runs/{RUN_ID}/static-report",
+        "plan": f"/api/v1/runs/{RUN_ID}/plan",
     }
 
 
@@ -163,6 +201,23 @@ def test_get_static_report_maps_unknown_run_to_not_found() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == {"code": "RUN_NOT_FOUND"}
+
+
+def test_get_plan_returns_the_versioned_agent_plan() -> None:
+    response = _client(StubRunService()).get(f"/api/v1/runs/{RUN_ID}/plan")
+
+    assert response.status_code == 200
+    assert response.json()["plan"]["schema_version"] == "1.0"
+    assert response.json()["input_hash"] == "c" * 64
+
+
+def test_get_plan_maps_not_ready_to_stable_conflict() -> None:
+    response = _client(
+        StubRunService(), plan_service=StubPlanService(AuditPlanNotReadyError(RUN_ID))
+    ).get(f"/api/v1/runs/{RUN_ID}/plan")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "AUDIT_PLAN_NOT_READY"}
 
 
 def test_cancel_run_records_a_cooperative_request() -> None:

@@ -5,6 +5,7 @@ from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
 
+from shadowops.agent.contracts import AuditPlanRecordV1, PlanningResultV1
 from shadowops.domain.runs import AuditRun, OutboxEvent, RunState, RunStep
 from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
 from shadowops.rules.contracts import StaticReportV1
@@ -104,6 +105,12 @@ class StaticReportRepository(Protocol):
     def create_or_get(self, report: StaticReportV1) -> StaticReportV1: ...
 
 
+class AgentPlanningRepository(Protocol):
+    def get_plan_for_run(self, run_id: UUID) -> AuditPlanRecordV1 | None: ...
+
+    def save_result(self, result: PlanningResultV1) -> AuditPlanRecordV1 | None: ...
+
+
 class UnitOfWork(Protocol):
     @property
     def runs(self) -> RunRepository: ...
@@ -122,6 +129,9 @@ class UnitOfWork(Protocol):
 
     @property
     def static_reports(self) -> StaticReportRepository: ...
+
+    @property
+    def agent_planning(self) -> AgentPlanningRepository: ...
 
     def __enter__(self) -> Self: ...
 

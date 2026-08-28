@@ -9,6 +9,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
+from shadowops.agent.contracts import (
+    AuditPlanRecordV1,
+    PlanningResultV1,
+)
 from shadowops.domain.errors import ImmutableResultConflict, OptimisticConcurrencyError
 from shadowops.domain.runs import (
     TERMINAL_STATES,
@@ -20,6 +24,9 @@ from shadowops.domain.runs import (
     StepStatus,
 )
 from shadowops.persistence.models import (
+    AgentInvocationModel,
+    AgentToolCallModel,
+    AuditPlanModel,
     AuditRunModel,
     OutboxEventModel,
     RepoSnapshotModel,
@@ -675,4 +682,65 @@ class SqlAlchemyStaticReportRepository:
             exclude={"id", "created_at"}
         ):
             raise ImmutableResultConflict("static report")
+        return existing
+
+
+class SqlAlchemyAgentPlanningRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_plan_for_run(self, run_id: UUID) -> AuditPlanRecordV1 | None:
+        model = self._session.scalar(select(AuditPlanModel).where(AuditPlanModel.run_id == run_id))
+        if model is None:
+            return None
+        return AuditPlanRecordV1.model_validate(
+            {
+                "id": model.id,
+                "run_id": model.run_id,
+                "invocation_id": model.invocation_id,
+                "input_hash": model.input_hash,
+                "plan": model.plan,
+                "created_at": model.created_at,
+            }
+        )
+
+    def save_result(self, result: PlanningResultV1) -> AuditPlanRecordV1 | None:
+        invocation = result.invocation
+        self._session.execute(
+            insert(AgentInvocationModel)
+            .values(**invocation.model_dump(mode="python"))
+            .on_conflict_do_nothing(constraint="uq_agent_run_phase")
+        )
+        for call in result.tool_calls:
+            values = call.model_dump(mode="python", exclude={"observation"})
+            values["observation"] = call.observation.model_dump(mode="json")
+            self._session.execute(
+                insert(AgentToolCallModel)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_agent_tool_call_sequence")
+            )
+        if result.plan is not None:
+            record = result.plan
+            self._session.execute(
+                insert(AuditPlanModel)
+                .values(
+                    id=record.id,
+                    run_id=record.run_id,
+                    invocation_id=record.invocation_id,
+                    input_hash=record.input_hash,
+                    plan=record.plan.model_dump(mode="json"),
+                    created_at=record.created_at,
+                )
+                .on_conflict_do_nothing(index_elements=[AuditPlanModel.run_id])
+            )
+        existing = self.get_plan_for_run(invocation.run_id)
+        if result.plan is not None and existing is None:
+            raise RuntimeError("Agent planning upsert did not expose a durable plan")
+        if (
+            result.plan is not None
+            and existing is not None
+            and existing.model_dump(exclude={"id", "created_at"})
+            != result.plan.model_dump(exclude={"id", "created_at"})
+        ):
+            raise ImmutableResultConflict("audit plan")
         return existing

@@ -13,6 +13,7 @@ from shadowops import __version__
 from shadowops.api.routes.health import router as health_router
 from shadowops.api.routes.run_events import router as run_events_router
 from shadowops.api.routes.runs import router as runs_router
+from shadowops.application.planning import AuditPlanQueryService
 from shadowops.application.readiness import ReadinessService
 from shadowops.application.run_timeline import RunTimelineService
 from shadowops.application.runs import RunService
@@ -29,6 +30,7 @@ def create_app(
     run_service: RunService | None = None,
     timeline_service: RunTimelineService | None = None,
     static_report_service: StaticReportQueryService | None = None,
+    plan_service: AuditPlanQueryService | None = None,
 ) -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -65,6 +67,9 @@ def create_app(
             static_report_service = StaticReportQueryService(
                 lambda: SqlAlchemyUnitOfWork(session_factory)
             )
+        if plan_service is None:
+            session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+            plan_service = AuditPlanQueryService(lambda: SqlAlchemyUnitOfWork(session_factory))
 
         def close_default_dependencies() -> None:
             try:
@@ -87,6 +92,7 @@ def create_app(
     application.state.run_service = run_service
     application.state.timeline_service = timeline_service
     application.state.static_report_service = static_report_service
+    application.state.plan_service = plan_service
     application.state.sse_poll_interval_seconds = settings.sse_poll_interval_seconds
     application.state.sse_keepalive_seconds = settings.sse_keepalive_seconds
     application.include_router(health_router)
