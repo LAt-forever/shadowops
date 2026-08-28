@@ -26,12 +26,12 @@ def _request(method: str, path: str, **kwargs: object) -> httpx.Response:
         return client.request(method, path, **kwargs)
 
 
-def _create(key: str) -> dict[str, object]:
+def _create(key: str, repository_path: str = "projects/m1-noop-demo") -> dict[str, object]:
     response = _request(
         "POST",
         "/api/v1/runs",
         headers={"Idempotency-Key": key},
-        json={"repository_path": "projects/m1-noop-demo"},
+        json={"repository_path": repository_path},
     )
     assert response.status_code == 202
     return response.json()
@@ -104,6 +104,7 @@ def test_run_completes_idempotently_and_survives_api_restart() -> None:
 
     completed = _wait_for_state(str(first["id"]), "COMPLETED")
     assert completed["version"] == 12
+    report_before_restart = _request("GET", f"/api/v1/runs/{first['id']}/static-report").json()
 
     timeline = _request("GET", f"/api/v1/runs/{first['id']}/timeline")
     assert timeline.status_code == 200
@@ -122,6 +123,9 @@ def test_run_completes_idempotently_and_survives_api_restart() -> None:
     _compose("restart", "api")
     _wait_for_api()
     assert _request("GET", f"/api/v1/runs/{first['id']}").json()["state"] == "COMPLETED"
+    assert (
+        _request("GET", f"/api/v1/runs/{first['id']}/static-report").json() == report_before_restart
+    )
 
 
 def test_queued_run_and_duplicate_messages_recover_after_worker_restart() -> None:
@@ -129,6 +133,9 @@ def test_queued_run_and_duplicate_messages_recover_after_worker_restart() -> Non
     try:
         run = _create(f"e2e-worker-restart-{uuid4()}")
         assert run["state"] == "QUEUED"
+        pending_report = _request("GET", f"/api/v1/runs/{run['id']}/static-report")
+        assert pending_report.status_code == 409
+        assert pending_report.json()["detail"] == {"code": "STATIC_REPORT_NOT_READY"}
         event_id = _initial_event_id(str(run["id"]))
         assert event_id
         _publish_event(event_id)
@@ -177,3 +184,32 @@ def test_missing_repository_becomes_a_stable_failed_timeline() -> None:
     timeline = _request("GET", f"/api/v1/runs/{failed['id']}/timeline").json()
     assert [event["state"] for event in timeline["events"]] == ["QUEUED", "FAILED"]
     assert timeline["events"][-1]["error_code"] == "REPOSITORY_NOT_FOUND"
+
+
+def test_safe_changed_revision_produces_an_information_only_static_report() -> None:
+    run = _create(f"e2e-safe-static-{uuid4()}", "projects/safe-add-column")
+
+    _wait_for_state(str(run["id"]), "COMPLETED")
+    response = _request("GET", f"/api/v1/runs/{run['id']}/static-report")
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["risk_level"] == "INFO"
+    assert report["findings"] == []
+    assert report["revision_graph"]["changed_revisions"] == ["002"]
+
+
+def test_dangerous_changed_revision_produces_located_high_risk_findings() -> None:
+    run = _create(f"e2e-dangerous-static-{uuid4()}", "projects/dangerous-drop")
+
+    _wait_for_state(str(run["id"]), "COMPLETED")
+    response = _request("GET", f"/api/v1/runs/{run['id']}/static-report")
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["risk_level"] == "HIGH"
+    by_rule = {finding["rule_id"]: finding for finding in report["findings"]}
+    assert {"SOPS001", "SOPS004"}.issubset(by_rule)
+    assert by_rule["SOPS001"]["relative_path"].endswith("002_drop_legacy.py")
+    assert by_rule["SOPS001"]["line"] == 10
+    assert by_rule["SOPS001"]["evidence_ids"][0].startswith("evidence:")

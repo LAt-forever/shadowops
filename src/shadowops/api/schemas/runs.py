@@ -66,7 +66,7 @@ class AuditRunViewV1(BaseModel):
     id: UUID
     state: RunState
     version: int = Field(ge=1)
-    execution_profile: str = "m2.secure-discovery.v1"
+    execution_profile: str = "m2.static-audit.v1"
     cancel_requested_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

@@ -207,6 +207,26 @@ def test_claim_and_finalize_advance_exactly_one_state_and_enqueue_the_next_event
     }
 
 
+def test_static_analysis_claim_uses_the_real_m2_handler_version() -> None:
+    store = _store()
+    store.runs[RUN_ID].state = RunState.DISCOVERING
+    store.runs[RUN_ID].version = 2
+    store.events[EVENT_ID].aggregate_version = 2
+    store.events[EVENT_ID].payload = {
+        "run_id": str(RUN_ID),
+        "expected_state": "DISCOVERING",
+        "expected_version": 2,
+    }
+
+    claim = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN]).claim(
+        EVENT_ID, worker_id="worker-a"
+    )
+
+    assert claim is not None
+    assert claim.to_state is RunState.STATIC_ANALYSIS
+    assert claim.handler_version == "m2.static-analysis.v1"
+
+
 def test_duplicate_message_after_finalize_is_an_idempotent_noop() -> None:
     store = _store()
     service = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN, NEXT_EVENT_ID])
