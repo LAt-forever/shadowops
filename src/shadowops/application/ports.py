@@ -7,6 +7,7 @@ from uuid import UUID
 
 from shadowops.domain.runs import AuditRun, OutboxEvent, RunState, RunStep
 from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
+from shadowops.rules.contracts import StaticReportV1
 
 
 class RunRepository(Protocol):
@@ -97,6 +98,12 @@ class RevisionGraphRepository(Protocol):
     def create_or_get(self, graph: RevisionGraphV1) -> RevisionGraphV1: ...
 
 
+class StaticReportRepository(Protocol):
+    def get_for_run(self, run_id: UUID) -> StaticReportV1 | None: ...
+
+    def create_or_get(self, report: StaticReportV1) -> StaticReportV1: ...
+
+
 class UnitOfWork(Protocol):
     @property
     def runs(self) -> RunRepository: ...
@@ -112,6 +119,9 @@ class UnitOfWork(Protocol):
 
     @property
     def revision_graphs(self) -> RevisionGraphRepository: ...
+
+    @property
+    def static_reports(self) -> StaticReportRepository: ...
 
     def __enter__(self) -> Self: ...
 

@@ -8,13 +8,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shadowops.application.discovery import DiscoveryStageHandler, NoOpStageHandler, StageHandler
 from shadowops.application.run_execution import RunExecutionService
+from shadowops.application.static_analysis import StaticAnalysisStageHandler
 from shadowops.config import get_settings
 from shadowops.domain.runs import RunState
 from shadowops.persistence.database import create_control_engine, create_session_factory
 from shadowops.persistence.uow import SqlAlchemyUnitOfWork
 from shadowops.repository.alembic import AlembicDiscoveryService
-from shadowops.repository.contracts import RepoSnapshotV1
-from shadowops.repository.snapshot import SnapshotService
+from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
+from shadowops.repository.snapshot import SnapshotReader, SnapshotService
+from shadowops.rules.service import StaticAuditService
 from shadowops.worker.outbox import CeleryEventPublisher, OutboxDispatcher
 from shadowops.worker.reconciler import RunReconciler
 
@@ -44,6 +46,10 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
         with uow_factory() as uow:
             return uow.snapshots.get(snapshot_id)
 
+    def graph_lookup(run_id: UUID) -> RevisionGraphV1 | None:
+        with uow_factory() as uow:
+            return uow.revision_graphs.get_for_run(run_id)
+
     discovery = DiscoveryStageHandler(
         uow_factory,
         SnapshotService(
@@ -56,8 +62,26 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
         ),
         AlembicDiscoveryService(settings.artifact_root, snapshot_lookup),
     )
+    static_analysis = StaticAnalysisStageHandler(
+        uow_factory,
+        StaticAuditService(
+            snapshot_lookup,
+            graph_lookup,
+            SnapshotReader(settings.artifact_root, snapshot_lookup),
+            max_source_bytes=settings.snapshot_max_file_bytes,
+        ),
+    )
     noop = NoOpStageHandler()
-    return {state: discovery if state is RunState.DISCOVERING else noop for state in RunState}
+    return {
+        state: (
+            discovery
+            if state is RunState.DISCOVERING
+            else static_analysis
+            if state is RunState.STATIC_ANALYSIS
+            else noop
+        )
+        for state in RunState
+    }
 
 
 @lru_cache

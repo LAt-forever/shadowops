@@ -152,3 +152,20 @@ class RevisionGraphModel(Base):
     changed_revisions: Mapped[list[str]] = mapped_column(JSON)
     unsupported_reasons: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class StaticReportModel(Base):
+    __tablename__ = "static_reports"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    snapshot_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repo_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(String(16))
+    ruleset_version: Mapped[str] = mapped_column(String(64))
+    risk_level: Mapped[str] = mapped_column(String(16))
+    report: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

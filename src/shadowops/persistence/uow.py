@@ -10,6 +10,7 @@ from shadowops.persistence.repositories import (
     SqlAlchemyRevisionGraphRepository,
     SqlAlchemyRunRepository,
     SqlAlchemyRunStepRepository,
+    SqlAlchemyStaticReportRepository,
 )
 
 
@@ -26,6 +27,7 @@ class SqlAlchemyUnitOfWork:
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         self.snapshots = SqlAlchemyRepoSnapshotRepository(self.session)
         self.revision_graphs = SqlAlchemyRevisionGraphRepository(self.session)
+        self.static_reports = SqlAlchemyStaticReportRepository(self.session)
         self._committed = False
         return self
 

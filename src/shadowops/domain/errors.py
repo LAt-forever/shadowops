@@ -69,6 +69,15 @@ class RunNotFoundError(DomainError):
         super().__init__(f"Audit run {run_id} was not found")
 
 
+class StaticReportNotReadyError(DomainError):
+    """Raised when a known run has not committed its static report yet."""
+
+    code = "STATIC_REPORT_NOT_READY"
+
+    def __init__(self, run_id: Any) -> None:
+        super().__init__(f"Static report for audit run {run_id} is not ready")
+
+
 class ClaimLostError(DomainError):
     """Raised when an expired worker attempts to mutate a reclaimed step."""
 

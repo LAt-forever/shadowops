@@ -10,6 +10,7 @@ from shadowops.api.schemas.runs import (
     DiffMode,
 )
 from shadowops.domain.runs import RunState
+from shadowops.rules.contracts import StaticFindingV1
 
 
 def test_create_run_defaults_to_working_tree_and_normalizes_path() -> None:
@@ -57,7 +58,7 @@ def test_cancel_requires_a_positive_expected_version() -> None:
         CancelAuditRunRequestV1(expected_version=0)
 
 
-def test_run_view_exposes_versioned_walking_skeleton_identity() -> None:
+def test_run_view_exposes_versioned_static_audit_identity() -> None:
     run_id = uuid4()
 
     view = AuditRunViewV1(id=run_id, state=RunState.QUEUED, version=1)
@@ -67,10 +68,27 @@ def test_run_view_exposes_versioned_walking_skeleton_identity() -> None:
         "id": str(run_id),
         "state": "QUEUED",
         "version": 1,
-        "execution_profile": "m2.secure-discovery.v1",
+        "execution_profile": "m2.static-audit.v1",
         "cancel_requested_at": None,
         "created_at": None,
         "updated_at": None,
         "completed_at": None,
         "links": {},
     }
+
+
+def test_static_finding_contract_rejects_unversioned_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        StaticFindingV1(
+            rule_id="SOPS001",
+            rule_version="1.0",
+            severity="HIGH",
+            confidence=1.0,
+            relative_path="migrations/versions/002.py",
+            line=3,
+            column=4,
+            message="Destructive operation",
+            remediation="Use a phased rollout",
+            evidence_ids=("evidence:abc",),
+            shell_command="dropdb production",  # type: ignore[call-arg]
+        )

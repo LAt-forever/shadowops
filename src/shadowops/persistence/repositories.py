@@ -25,6 +25,7 @@ from shadowops.persistence.models import (
     RepoSnapshotModel,
     RevisionGraphModel,
     RunStepModel,
+    StaticReportModel,
 )
 from shadowops.repository.contracts import (
     GitChangeV1,
@@ -33,6 +34,7 @@ from shadowops.repository.contracts import (
     RevisionNodeV1,
     UnsupportedReasonV1,
 )
+from shadowops.rules.contracts import StaticReportV1
 
 
 def _to_run(model: AuditRunModel) -> AuditRun:
@@ -638,4 +640,39 @@ class SqlAlchemyRevisionGraphRepository:
             exclude={"id", "created_at"}
         ):
             raise ImmutableResultConflict("revision graph")
+        return existing
+
+
+class SqlAlchemyStaticReportRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_for_run(self, run_id: UUID) -> StaticReportV1 | None:
+        model = self._session.scalar(
+            select(StaticReportModel).where(StaticReportModel.run_id == run_id)
+        )
+        return None if model is None else StaticReportV1.model_validate(model.report)
+
+    def create_or_get(self, report: StaticReportV1) -> StaticReportV1:
+        self._session.execute(
+            insert(StaticReportModel)
+            .values(
+                id=report.id,
+                run_id=report.run_id,
+                snapshot_id=report.snapshot_id,
+                schema_version=report.schema_version,
+                ruleset_version=report.ruleset_version,
+                risk_level=report.risk_level,
+                report=report.model_dump(mode="json"),
+                created_at=report.created_at,
+            )
+            .on_conflict_do_nothing(index_elements=[StaticReportModel.run_id])
+        )
+        existing = self.get_for_run(report.run_id)
+        if existing is None:
+            raise RuntimeError("Static report upsert did not expose a durable result")
+        if existing.model_dump(exclude={"id", "created_at"}) != report.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("static report")
         return existing

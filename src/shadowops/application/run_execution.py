@@ -62,9 +62,7 @@ class RunExecutionService:
                 attempt=1,
                 status=StepStatus.RUNNING,
                 expected_run_version=run.version,
-                handler_version=(
-                    "m2.discovery.v1" if target is RunState.DISCOVERING else "m1.noop.v1"
-                ),
+                handler_version=self._handler_version(target),
                 worker_id=worker_id,
                 claim_token=self._uuid_factory(),
                 heartbeat_at=now,
@@ -169,3 +167,11 @@ class RunExecutionService:
             available_at=now,
             created_at=now,
         )
+
+    @staticmethod
+    def _handler_version(target: RunState) -> str:
+        if target is RunState.DISCOVERING:
+            return "m2.discovery.v1"
+        if target is RunState.STATIC_ANALYSIS:
+            return "m2.static-analysis.v1"
+        return "m1.noop.v1"
