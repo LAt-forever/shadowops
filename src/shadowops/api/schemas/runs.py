@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Self
 from uuid import UUID
 
@@ -33,6 +34,14 @@ class CreateAuditRunRequestV1(BaseModel):
             raise ValueError("value must contain safe non-empty text")
         return normalized
 
+    @field_validator("repository_path")
+    @classmethod
+    def validate_relative_repository_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in value.split("/")):
+            raise ValueError("repository_path must be a safe relative path")
+        return value
+
     @model_validator(mode="after")
     def validate_diff_selection(self) -> Self:
         if self.diff_mode is DiffMode.RANGE and (self.base_ref is None or self.head_ref is None):
@@ -57,7 +66,7 @@ class AuditRunViewV1(BaseModel):
     id: UUID
     state: RunState
     version: int = Field(ge=1)
-    execution_profile: str = "m1.noop.v1"
+    execution_profile: str = "m2.secure-discovery.v1"
     cancel_requested_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

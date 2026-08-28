@@ -62,7 +62,9 @@ class RunExecutionService:
                 attempt=1,
                 status=StepStatus.RUNNING,
                 expected_run_version=run.version,
-                handler_version="m1.noop.v1",
+                handler_version=(
+                    "m2.discovery.v1" if target is RunState.DISCOVERING else "m1.noop.v1"
+                ),
                 worker_id=worker_id,
                 claim_token=self._uuid_factory(),
                 heartbeat_at=now,
@@ -73,6 +75,14 @@ class RunExecutionService:
             if claim is not None:
                 uow.commit()
             return claim
+
+    def get_run_for_claim(self, claim: RunStep) -> AuditRun:
+        """Load the exact aggregate version fenced by a claimed step."""
+        with self._uow_factory() as uow:
+            run = uow.runs.get(claim.run_id)
+        if run is None or run.version != claim.expected_run_version:
+            raise ClaimLostError(claim.id)
+        return run
 
     def heartbeat(self, claim: RunStep) -> bool:
         if claim.claim_token is None:
@@ -115,6 +125,33 @@ class RunExecutionService:
             uow.runs.save(run, expected_version=expected_version)
             if run.state not in TERMINAL_STATES:
                 uow.outbox.add(self._next_event(run, now))
+            uow.commit()
+            return run
+
+    def fail(self, claim: RunStep, *, error_code: str, error_detail: str) -> AuditRun:
+        """Atomically fence a failed step and terminate its run."""
+        if claim.claim_token is None:
+            raise ClaimLostError(claim.id)
+        now = self._clock()
+        with self._uow_factory() as uow:
+            run = uow.runs.get(claim.run_id)
+            if run is None or run.version != claim.expected_run_version:
+                raise ClaimLostError(claim.id)
+            resulting_version = run.version + 1
+            if not uow.steps.fail(
+                claim.id,
+                claim_token=claim.claim_token,
+                resulting_run_version=resulting_version,
+                finished_at=now,
+                error_code=error_code,
+                error_detail=error_detail,
+            ):
+                raise ClaimLostError(claim.id)
+            expected_version = run.version
+            run.failure_code = error_code
+            run.failure_detail = error_detail
+            run.transition(RunState.FAILED, now=now)
+            uow.runs.save(run, expected_version=expected_version)
             uow.commit()
             return run
 

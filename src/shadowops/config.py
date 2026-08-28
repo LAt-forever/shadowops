@@ -1,6 +1,7 @@
 """Application configuration."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -34,6 +35,12 @@ class Settings(BaseSettings):
     recovery_max_attempts: int = 5
     sse_poll_interval_seconds: float = 0.25
     sse_keepalive_seconds: float = 10.0
+    repo_root: Path = Path("/repositories")
+    artifact_root: Path = Path("/var/lib/shadowops/artifacts")
+    snapshot_max_files: int = 10_000
+    snapshot_max_file_bytes: int = 5 * 1024 * 1024
+    snapshot_max_total_bytes: int = 100 * 1024 * 1024
+    snapshot_read_chunk_bytes: int = 1024 * 1024
 
 
 @lru_cache

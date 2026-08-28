@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -104,4 +105,50 @@ class OutboxEventModel(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     publish_attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RepoSnapshotModel(Base):
+    __tablename__ = "repo_snapshots"
+    __table_args__ = (
+        CheckConstraint("file_count > 0", name="ck_repo_snapshots_file_count_positive"),
+        CheckConstraint("total_bytes >= 0", name="ck_repo_snapshots_total_bytes_nonnegative"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    schema_version: Mapped[str] = mapped_column(String(16))
+    source_path_hash: Mapped[str] = mapped_column(String(64))
+    diff_mode: Mapped[str] = mapped_column(String(32))
+    base_commit: Mapped[str | None] = mapped_column(String(40))
+    head_commit: Mapped[str] = mapped_column(String(40))
+    dirty_diff_hash: Mapped[str | None] = mapped_column(String(64))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    artifact_uri: Mapped[str] = mapped_column(String(255))
+    file_count: Mapped[int] = mapped_column(Integer)
+    total_bytes: Mapped[int] = mapped_column(Integer)
+    changed_paths: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RevisionGraphModel(Base):
+    __tablename__ = "revision_graphs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    snapshot_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("repo_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(String(16))
+    supported: Mapped[bool] = mapped_column(Boolean)
+    nodes: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    heads: Mapped[list[str]] = mapped_column(JSON)
+    baseline_revision: Mapped[str | None] = mapped_column(String(255))
+    target_chain: Mapped[list[str]] = mapped_column(JSON)
+    changed_revisions: Mapped[list[str]] = mapped_column(JSON)
+    unsupported_reasons: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -34,6 +34,15 @@ services:
       SHADOWOPS_REDIS_URL: redis://redis:6379/0
       SHADOWOPS_POSTGRES_MAJOR: "16"
       SHADOWOPS_LOG_LEVEL: INFO
+      SHADOWOPS_REPO_ROOT: /repositories
+      SHADOWOPS_ARTIFACT_ROOT: /var/lib/shadowops/artifacts
+      SHADOWOPS_SNAPSHOT_MAX_FILES: "10000"
+      SHADOWOPS_SNAPSHOT_MAX_FILE_BYTES: "5242880"
+      SHADOWOPS_SNAPSHOT_MAX_TOTAL_BYTES: "104857600"
+      SHADOWOPS_SNAPSHOT_READ_CHUNK_BYTES: "1048576"
+    volumes: &shadowops-volumes
+      - ${SHADOWOPS_REPO_ROOT_HOST:-./tests/fixtures/repositories}:/repositories:ro
+      - shadowops-artifacts:/var/lib/shadowops/artifacts
     depends_on:
       control-postgres:
         condition: service_healthy
@@ -49,7 +58,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${SHADOWOPS_HTTP_PORT_HOST:-8000}:8000"
 
   worker:
     build:
@@ -64,6 +73,7 @@ services:
       - --schedule=/tmp/shadowops-celerybeat-schedule
       - --loglevel=INFO
     environment: *shadowops-environment
+    volumes: *shadowops-volumes
     depends_on:
       control-postgres:
         condition: service_healthy
@@ -80,3 +90,4 @@ services:
 
 volumes:
   control-postgres-data:
+  shadowops-artifacts:

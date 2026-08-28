@@ -3,13 +3,18 @@
 from typing import Any
 from uuid import UUID
 
-from shadowops.domain.errors import ClaimLostError
+from shadowops.domain.errors import ClaimLostError, RepositoryInputError
 from shadowops.worker.celery_app import celery_app
 from shadowops.worker.runtime import (
     get_execution_service,
     get_outbox_dispatcher,
     get_run_reconciler,
+    get_stage_handlers,
 )
+
+
+class RunCancellationRequested(Exception):
+    """Internal control signal raised at cooperative stage checkpoints."""
 
 
 @celery_app.task(name="shadowops.maintenance.dispatch_outbox")  # type: ignore[untyped-decorator]
@@ -34,7 +39,7 @@ def reconcile_runs() -> dict[str, int]:
     reject_on_worker_lost=True,
 )
 def process_run_event(self: Any, event_id: str) -> dict[str, str | int]:
-    """Claim and finalize one explicit M1 no-op stage."""
+    """Execute one fenced stage and advance or fail its audit run."""
     service = get_execution_service()
     parsed_event_id = UUID(event_id)
     worker_id = getattr(self.request, "hostname", None) or "shadowops-worker"
@@ -44,7 +49,37 @@ def process_run_event(self: Any, event_id: str) -> dict[str, str | int]:
     if not service.heartbeat(claim):
         return {"status": "ignored", "event_id": event_id}
     try:
+        run = service.get_run_for_claim(claim)
+        if run.cancel_requested_at is None:
+            handler = get_stage_handlers()[claim.to_state]
+
+            def checkpoint() -> None:
+                if not service.heartbeat(claim):
+                    raise ClaimLostError(claim.id)
+                if service.get_run_for_claim(claim).cancel_requested_at is not None:
+                    raise RunCancellationRequested
+
+            handler.execute(run, checkpoint=checkpoint)
+            checkpoint()
         run = service.finalize(claim)
+    except RunCancellationRequested:
+        try:
+            run = service.finalize(claim)
+        except ClaimLostError:
+            return {"status": "ignored", "event_id": event_id}
+    except RepositoryInputError as error:
+        try:
+            run = service.fail(claim, error_code=error.code, error_detail=str(error))
+        except ClaimLostError:
+            return {"status": "ignored", "event_id": event_id}
+        return {
+            "status": "failed",
+            "event_id": event_id,
+            "run_id": str(run.id),
+            "state": run.state.value,
+            "version": run.version,
+            "error_code": error.code,
+        }
     except ClaimLostError:
         return {"status": "ignored", "event_id": event_id}
     return {

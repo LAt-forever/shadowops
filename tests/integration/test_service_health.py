@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -7,6 +8,7 @@ import httpx
 import pytest
 
 PROJECT_ROOT = Path(__file__).parents[2]
+API_BASE = os.environ.get("SHADOWOPS_API_BASE", "http://127.0.0.1:8000")
 
 
 def _run(*command: str) -> subprocess.CompletedProcess[str]:
@@ -25,7 +27,7 @@ def _compose(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 def _readiness() -> httpx.Response:
     with httpx.Client(trust_env=False) as client:
-        return client.get("http://127.0.0.1:8000/health/ready", timeout=5.0)
+        return client.get(f"{API_BASE}/health/ready", timeout=5.0)
 
 
 def _wait_until_ready(timeout: float = 10.0) -> None:
