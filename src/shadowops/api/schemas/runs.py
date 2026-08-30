@@ -66,7 +66,7 @@ class AuditRunViewV1(BaseModel):
     id: UUID
     state: RunState
     version: int = Field(ge=1)
-    execution_profile: str = "m3.fake-agent.v1"
+    execution_profile: str = "m5.dynamic-evidence.v1"
     failure_code: str | None = None
     cancel_requested_at: datetime | None = None
     created_at: datetime | None = None

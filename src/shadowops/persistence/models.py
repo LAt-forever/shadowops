@@ -281,3 +281,29 @@ class RunnerExecutionModel(Base):
     request: Mapped[dict[str, Any]] = mapped_column(JSON)
     result: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EvidenceItemModel(Base):
+    __tablename__ = "evidence_items"
+    __table_args__ = (
+        UniqueConstraint("execution_id", "kind", "sha256", name="uq_evidence_execution_kind_hash"),
+        Index("ix_evidence_items_run_created", "run_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    execution_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("runner_executions.id", ondelete="CASCADE"), nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(32))
+    producer: Mapped[str] = mapped_column(String(128))
+    observation_scope: Mapped[str] = mapped_column(String(32))
+    artifact_uri: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64))
+    byte_count: Mapped[int] = mapped_column(Integer)
+    media_type: Mapped[str] = mapped_column(String(64))
+    redaction_status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

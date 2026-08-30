@@ -23,11 +23,13 @@ from shadowops.domain.runs import (
     RunStep,
     StepStatus,
 )
+from shadowops.evidence.contracts import EvidenceItemV1
 from shadowops.persistence.models import (
     AgentInvocationModel,
     AgentToolCallModel,
     AuditPlanModel,
     AuditRunModel,
+    EvidenceItemModel,
     OutboxEventModel,
     RepoSnapshotModel,
     RevisionGraphModel,
@@ -897,3 +899,60 @@ class SqlAlchemySandboxRepository:
             )
             for model in models
         ]
+
+
+class SqlAlchemyEvidenceRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    @staticmethod
+    def _item(model: EvidenceItemModel) -> EvidenceItemV1:
+        return EvidenceItemV1.model_validate(
+            {
+                "id": model.id,
+                "run_id": model.run_id,
+                "execution_id": model.execution_id,
+                "schema_version": model.schema_version,
+                "kind": model.kind,
+                "producer": model.producer,
+                "observation_scope": model.observation_scope,
+                "artifact_uri": model.artifact_uri,
+                "sha256": model.sha256,
+                "byte_count": model.byte_count,
+                "media_type": model.media_type,
+                "redaction_status": model.redaction_status,
+                "created_at": model.created_at,
+            }
+        )
+
+    def create_or_get(self, item: EvidenceItemV1) -> EvidenceItemV1:
+        values = item.model_dump(mode="python")
+        values["kind"] = item.kind.value
+        self._session.execute(
+            insert(EvidenceItemModel)
+            .values(**values)
+            .on_conflict_do_nothing(constraint="uq_evidence_execution_kind_hash")
+        )
+        model = self._session.scalar(
+            select(EvidenceItemModel).where(
+                EvidenceItemModel.execution_id == item.execution_id,
+                EvidenceItemModel.kind == item.kind.value,
+                EvidenceItemModel.sha256 == item.sha256,
+            )
+        )
+        if model is None:
+            raise RuntimeError("Evidence upsert did not expose a durable item")
+        existing = self._item(model)
+        if existing.model_dump(exclude={"id", "created_at"}) != item.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("dynamic evidence")
+        return existing
+
+    def list_for_run(self, run_id: UUID) -> list[EvidenceItemV1]:
+        models = self._session.scalars(
+            select(EvidenceItemModel)
+            .where(EvidenceItemModel.run_id == run_id)
+            .order_by(EvidenceItemModel.created_at, EvidenceItemModel.id)
+        ).all()
+        return [self._item(model) for model in models]

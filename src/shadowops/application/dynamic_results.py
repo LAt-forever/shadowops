@@ -20,9 +20,11 @@ class DynamicAuditQueryService:
             if lease is None:
                 raise DynamicAuditNotReadyError(run_id)
             executions = uow.sandbox.list_executions(lease.environment.id)
+            evidence_items = uow.evidence.list_for_run(run_id)
         return DynamicAuditViewV1(
             run_id=run_id,
             generation=generation,
             environment=lease.environment,
             executions=tuple(executions),
+            evidence_items=tuple(evidence_items),
         )

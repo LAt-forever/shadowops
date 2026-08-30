@@ -13,13 +13,19 @@ from shadowops.application.discovery import DiscoveryStageHandler, NoOpStageHand
 from shadowops.application.dynamic_audit import (
     ApplyTargetStageHandler,
     BaselineUpgradeStageHandler,
+    CollectEvidenceStageHandler,
     ProvisionShadowStageHandler,
+    RollbackRoundtripStageHandler,
+    SeedDataStageHandler,
+    SmokeChecksStageHandler,
 )
 from shadowops.application.planning import PlanningStageHandler
 from shadowops.application.run_execution import RunExecutionService
 from shadowops.application.static_analysis import StaticAnalysisStageHandler
 from shadowops.config import get_settings
 from shadowops.domain.runs import RunState
+from shadowops.evidence.collector import DynamicEvidenceCollector
+from shadowops.evidence.store import LocalArtifactStore
 from shadowops.persistence.database import create_control_engine, create_session_factory
 from shadowops.persistence.uow import SqlAlchemyUnitOfWork
 from shadowops.repository.alembic import AlembicDiscoveryService
@@ -95,6 +101,10 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
     provisioning = ProvisionShadowStageHandler(uow_factory, sandbox)
     baseline = BaselineUpgradeStageHandler(uow_factory, sandbox)
     applying = ApplyTargetStageHandler(uow_factory, sandbox)
+    seeding = SeedDataStageHandler(uow_factory, sandbox)
+    smoke = SmokeChecksStageHandler(uow_factory, sandbox)
+    rollback = RollbackRoundtripStageHandler(uow_factory, sandbox)
+    reporting = CollectEvidenceStageHandler(get_evidence_collector(), sandbox)
     noop = NoOpStageHandler()
     return {
         state: (
@@ -110,6 +120,14 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
             if state is RunState.BASELINE_READY
             else applying
             if state is RunState.APPLYING
+            else seeding
+            if state is RunState.SEEDING
+            else smoke
+            if state is RunState.SMOKE_TESTING
+            else rollback
+            if state is RunState.ROLLBACK_VERIFYING
+            else reporting
+            if state is RunState.REPORTING
             else noop
         )
         for state in RunState
@@ -128,6 +146,15 @@ def get_sandbox_manager() -> DockerResourceManager:
         lease_duration=timedelta(seconds=settings.sandbox_lease_seconds),
         readiness_timeout_seconds=settings.sandbox_readiness_timeout_seconds,
         execution_timeout_seconds=settings.sandbox_execution_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_evidence_collector() -> DynamicEvidenceCollector:
+    settings = get_settings()
+    sessions = get_worker_session_factory()
+    return DynamicEvidenceCollector(
+        lambda: SqlAlchemyUnitOfWork(sessions), LocalArtifactStore(settings.artifact_root)
     )
 
 

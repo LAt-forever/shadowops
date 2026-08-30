@@ -29,7 +29,11 @@ for repository in \
     tests/fixtures/repositories/projects/safe-add-column \
     tests/fixtures/repositories/projects/dangerous-drop \
     tests/fixtures/repositories/projects/broken-upgrade \
-    tests/fixtures/repositories/projects/slow-upgrade
+    tests/fixtures/repositories/projects/slow-upgrade \
+    tests/fixtures/repositories/projects/unique-conflict \
+    tests/fixtures/repositories/projects/irreversible-roundtrip \
+    tests/fixtures/repositories/projects/type-conversion-failure \
+    tests/fixtures/repositories/projects/unsupported-type
 do
     configure_repository "$repository"
     if ! git -C "$repository" rev-parse --verify HEAD >/dev/null 2>&1; then

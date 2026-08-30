@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shadowops.persistence.repositories import (
     SqlAlchemyAgentPlanningRepository,
+    SqlAlchemyEvidenceRepository,
     SqlAlchemyOutboxRepository,
     SqlAlchemyRepoSnapshotRepository,
     SqlAlchemyRevisionGraphRepository,
@@ -32,6 +33,7 @@ class SqlAlchemyUnitOfWork:
         self.static_reports = SqlAlchemyStaticReportRepository(self.session)
         self.agent_planning = SqlAlchemyAgentPlanningRepository(self.session)
         self.sandbox = SqlAlchemySandboxRepository(self.session)
+        self.evidence = SqlAlchemyEvidenceRepository(self.session)
         self._committed = False
         return self
 
