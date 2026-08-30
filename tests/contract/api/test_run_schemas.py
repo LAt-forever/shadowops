@@ -69,6 +69,7 @@ def test_run_view_exposes_versioned_static_audit_identity() -> None:
         "state": "QUEUED",
         "version": 1,
         "execution_profile": "m3.fake-agent.v1",
+        "failure_code": None,
         "cancel_requested_at": None,
         "created_at": None,
         "updated_at": None,

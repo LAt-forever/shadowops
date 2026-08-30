@@ -10,6 +10,11 @@ from shadowops.agent.gateway import ReadOnlyToolGateway
 from shadowops.agent.provider import FakeAgentProvider
 from shadowops.agent.runtime import AgentPlanner
 from shadowops.application.discovery import DiscoveryStageHandler, NoOpStageHandler, StageHandler
+from shadowops.application.dynamic_audit import (
+    ApplyTargetStageHandler,
+    BaselineUpgradeStageHandler,
+    ProvisionShadowStageHandler,
+)
 from shadowops.application.planning import PlanningStageHandler
 from shadowops.application.run_execution import RunExecutionService
 from shadowops.application.static_analysis import StaticAnalysisStageHandler
@@ -21,6 +26,7 @@ from shadowops.repository.alembic import AlembicDiscoveryService
 from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
 from shadowops.repository.snapshot import SnapshotReader, SnapshotService
 from shadowops.rules.service import StaticAuditService
+from shadowops.sandbox.docker_manager import DockerResourceManager
 from shadowops.worker.outbox import CeleryEventPublisher, OutboxDispatcher
 from shadowops.worker.reconciler import RunReconciler
 
@@ -85,6 +91,10 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
             ),
         ),
     )
+    sandbox = get_sandbox_manager()
+    provisioning = ProvisionShadowStageHandler(uow_factory, sandbox)
+    baseline = BaselineUpgradeStageHandler(uow_factory, sandbox)
+    applying = ApplyTargetStageHandler(uow_factory, sandbox)
     noop = NoOpStageHandler()
     return {
         state: (
@@ -94,10 +104,31 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
             if state is RunState.STATIC_ANALYSIS
             else planning
             if state is RunState.PLANNING
+            else provisioning
+            if state is RunState.PROVISIONING
+            else baseline
+            if state is RunState.BASELINE_READY
+            else applying
+            if state is RunState.APPLYING
             else noop
         )
         for state in RunState
     }
+
+
+@lru_cache
+def get_sandbox_manager() -> DockerResourceManager:
+    settings = get_settings()
+    sessions = get_worker_session_factory()
+    return DockerResourceManager(
+        lambda: SqlAlchemyUnitOfWork(sessions),
+        settings.artifact_root,
+        postgres_image=settings.shadow_postgres_image,
+        runner_image=settings.runner_image,
+        lease_duration=timedelta(seconds=settings.sandbox_lease_seconds),
+        readiness_timeout_seconds=settings.sandbox_readiness_timeout_seconds,
+        execution_timeout_seconds=settings.sandbox_execution_timeout_seconds,
+    )
 
 
 @lru_cache

@@ -44,6 +44,18 @@ class RunExecutionService:
             expected_version = int(str(event.payload.get("expected_version")))
             if run.state is not expected_state or run.version != expected_version:
                 return None
+            current = uow.steps.get_current(run.id)
+            if (
+                run.cancel_requested_at is not None
+                and current is not None
+                and current.expected_run_version == run.version
+                and current.lease_expires_at is not None
+                and current.lease_expires_at > now
+            ):
+                # The in-flight owner observes cancellation through its heartbeat
+                # checkpoint. A redelivered outbox event must not create a second
+                # CANCELLED step that finalizes Docker resources underneath it.
+                return None
             target = (
                 RunState.CANCELLED
                 if run.cancel_requested_at is not None
@@ -176,4 +188,10 @@ class RunExecutionService:
             return "m2.static-analysis.v1"
         if target is RunState.PLANNING:
             return "m3.planning.v1"
+        if target is RunState.PROVISIONING:
+            return "m4.provision-shadow.v1"
+        if target is RunState.BASELINE_READY:
+            return "m4.baseline-upgrade.v1"
+        if target is RunState.APPLYING:
+            return "m4.apply-target.v1"
         return "m1.noop.v1"

@@ -30,3 +30,7 @@ def test_celery_uses_redis_for_delivery_not_result_truth() -> None:
         "task": "shadowops.maintenance.reconcile_runs",
         "schedule": 2.0,
     }
+    assert application.conf.beat_schedule["sweep-sandboxes"] == {
+        "task": "shadowops.maintenance.sweep_sandboxes",
+        "schedule": 30.0,
+    }

@@ -11,11 +11,13 @@ from shadowops.api.schemas.runs import (
     CancelAuditRunRequestV1,
     CreateAuditRunRequestV1,
 )
+from shadowops.application.dynamic_results import DynamicAuditQueryService
 from shadowops.application.planning import AuditPlanQueryService
 from shadowops.application.runs import RunService
 from shadowops.application.static_analysis import StaticReportQueryService
 from shadowops.domain.errors import (
     AuditPlanNotReadyError,
+    DynamicAuditNotReadyError,
     IdempotencyConflictError,
     OptimisticConcurrencyError,
     RunNotFoundError,
@@ -24,6 +26,7 @@ from shadowops.domain.errors import (
 )
 from shadowops.domain.runs import AuditRun
 from shadowops.rules.contracts import StaticReportV1
+from shadowops.sandbox.contracts import DynamicAuditViewV1
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -58,12 +61,24 @@ def _plan_service(request: Request) -> AuditPlanQueryService:
     return service
 
 
+def _dynamic_service(request: Request) -> DynamicAuditQueryService:
+    service: DynamicAuditQueryService | None = request.app.state.dynamic_audit_service
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "DYNAMIC_AUDIT_SERVICE_UNAVAILABLE"},
+        )
+    return service
+
+
 def _view(run: AuditRun) -> AuditRunViewV1:
     base = f"/api/v1/runs/{run.id}"
     return AuditRunViewV1(
         id=run.id,
         state=run.state,
         version=run.version,
+        execution_profile="m4.postgres16-alembic.v1",
+        failure_code=run.failure_code,
         cancel_requested_at=run.cancel_requested_at,
         created_at=run.created_at,
         updated_at=run.updated_at,
@@ -74,6 +89,7 @@ def _view(run: AuditRun) -> AuditRunViewV1:
             "timeline": f"{base}/timeline",
             "static_report": f"{base}/static-report",
             "plan": f"{base}/plan",
+            "dynamic_result": f"{base}/dynamic-result",
         },
     )
 
@@ -129,6 +145,20 @@ def get_audit_plan(run_id: UUID, request: Request) -> AuditPlanRecordV1:
             status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
         ) from error
     except AuditPlanNotReadyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
+        ) from error
+
+
+@router.get("/{run_id}/dynamic-result", response_model=DynamicAuditViewV1)
+def get_dynamic_result(run_id: UUID, request: Request) -> DynamicAuditViewV1:
+    try:
+        return _dynamic_service(request).get(run_id)
+    except RunNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
+        ) from error
+    except DynamicAuditNotReadyError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
         ) from error

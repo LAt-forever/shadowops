@@ -27,6 +27,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         worker_cancel_long_running_tasks_on_connection_loss=True,
         shadowops_outbox_batch_size=resolved.outbox_batch_size,
         shadowops_reconcile_batch_size=resolved.reconcile_batch_size,
+        shadowops_sandbox_sweep_interval_seconds=resolved.sandbox_sweep_interval_seconds,
         beat_schedule={
             "dispatch-outbox": {
                 "task": "shadowops.maintenance.dispatch_outbox",
@@ -35,6 +36,10 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             "reconcile-runs": {
                 "task": "shadowops.maintenance.reconcile_runs",
                 "schedule": resolved.reconcile_interval_seconds,
+            },
+            "sweep-sandboxes": {
+                "task": "shadowops.maintenance.sweep_sandboxes",
+                "schedule": resolved.sandbox_sweep_interval_seconds,
             },
         },
     )

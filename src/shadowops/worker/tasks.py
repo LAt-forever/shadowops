@@ -9,6 +9,7 @@ from shadowops.worker.runtime import (
     get_execution_service,
     get_outbox_dispatcher,
     get_run_reconciler,
+    get_sandbox_manager,
     get_stage_handlers,
 )
 
@@ -30,6 +31,11 @@ def reconcile_runs() -> dict[str, int]:
     limit = int(settings.get("shadowops_reconcile_batch_size", 50))
     result = get_run_reconciler().reconcile_batch(limit=limit)
     return {"reopened": result.reopened, "failed": result.failed}
+
+
+@celery_app.task(name="shadowops.maintenance.sweep_sandboxes")  # type: ignore[untyped-decorator]
+def sweep_sandboxes() -> dict[str, int]:
+    return {"cleaned": get_sandbox_manager().sweep_expired()}
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]
@@ -61,6 +67,8 @@ def process_run_event(self: Any, event_id: str) -> dict[str, str | int]:
 
             handler.execute(run, checkpoint=checkpoint)
             checkpoint()
+        else:
+            get_sandbox_manager().finalize_run(run.id)
         run = service.finalize(claim)
     except RunCancellationRequested:
         try:

@@ -9,6 +9,13 @@ from shadowops.agent.contracts import AuditPlanRecordV1, PlanningResultV1
 from shadowops.domain.runs import AuditRun, OutboxEvent, RunState, RunStep
 from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
 from shadowops.rules.contracts import StaticReportV1
+from shadowops.sandbox.contracts import (
+    RunnerAction,
+    RunnerExecutionV1,
+    ShadowEnvironmentLease,
+    ShadowEnvironmentStatus,
+    ShadowEnvironmentV1,
+)
 
 
 class RunRepository(Protocol):
@@ -111,6 +118,30 @@ class AgentPlanningRepository(Protocol):
     def save_result(self, result: PlanningResultV1) -> AuditPlanRecordV1 | None: ...
 
 
+class SandboxRepository(Protocol):
+    def get_environment(self, run_id: UUID, generation: int) -> ShadowEnvironmentLease | None: ...
+
+    def create_or_get_environment(
+        self, environment: ShadowEnvironmentV1, *, database_password: str
+    ) -> ShadowEnvironmentLease: ...
+
+    def set_environment_status(
+        self,
+        environment_id: UUID,
+        *,
+        status: ShadowEnvironmentStatus,
+        cleaned_at: datetime | None,
+    ) -> bool: ...
+
+    def get_execution(
+        self, environment_id: UUID, action: RunnerAction
+    ) -> RunnerExecutionV1 | None: ...
+
+    def create_or_get_execution(self, execution: RunnerExecutionV1) -> RunnerExecutionV1: ...
+
+    def list_executions(self, environment_id: UUID) -> list[RunnerExecutionV1]: ...
+
+
 class UnitOfWork(Protocol):
     @property
     def runs(self) -> RunRepository: ...
@@ -132,6 +163,9 @@ class UnitOfWork(Protocol):
 
     @property
     def agent_planning(self) -> AgentPlanningRepository: ...
+
+    @property
+    def sandbox(self) -> SandboxRepository: ...
 
     def __enter__(self) -> Self: ...
 

@@ -231,3 +231,53 @@ class AuditPlanModel(Base):
     input_hash: Mapped[str] = mapped_column(String(64))
     plan: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ShadowEnvironmentModel(Base):
+    __tablename__ = "shadow_environments"
+    __table_args__ = (
+        UniqueConstraint("run_id", "generation", name="uq_shadow_run_generation"),
+        CheckConstraint("generation >= 1", name="ck_shadow_generation_positive"),
+        Index("ix_shadow_status_lease", "status", "lease_expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    generation: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(32))
+    postgres_container_id: Mapped[str] = mapped_column(String(128))
+    network_id: Mapped[str] = mapped_column(String(128))
+    volume_name: Mapped[str] = mapped_column(String(255))
+    snapshot_volume_name: Mapped[str] = mapped_column(String(255))
+    postgres_image: Mapped[str] = mapped_column(String(255))
+    postgres_image_id: Mapped[str] = mapped_column(String(80))
+    runner_image: Mapped[str] = mapped_column(String(255))
+    runner_image_id: Mapped[str] = mapped_column(String(80))
+    database_password: Mapped[str] = mapped_column(String(255))
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RunnerExecutionModel(Base):
+    __tablename__ = "runner_executions"
+    __table_args__ = (
+        UniqueConstraint("environment_id", "action", name="uq_runner_environment_action"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    environment_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("shadow_environments.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    generation: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[str] = mapped_column(String(16))
+    action: Mapped[str] = mapped_column(String(32))
+    request: Mapped[dict[str, Any]] = mapped_column(JSON)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

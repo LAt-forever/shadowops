@@ -136,3 +136,14 @@ def test_process_event_turns_trusted_input_error_into_reliable_failure(monkeypat
         "error_code": "REPOSITORY_NOT_FOUND",
     }
     assert service.failed is True
+
+
+def test_sweeper_reports_expired_environment_cleanup(monkeypatch) -> None:
+    class Manager:
+        @staticmethod
+        def sweep_expired() -> int:
+            return 2
+
+    monkeypatch.setattr(tasks, "get_sandbox_manager", Manager)
+
+    assert tasks.sweep_sandboxes.run() == {"cleaned": 2}

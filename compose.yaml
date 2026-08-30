@@ -1,6 +1,18 @@
 name: shadowops
 
 services:
+  runner-image:
+    image: shadowops-runner:0.1.0
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+    entrypoint: ["/bin/true"]
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+
   control-postgres:
     image: postgres:16@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
     environment:
@@ -40,6 +52,11 @@ services:
       SHADOWOPS_SNAPSHOT_MAX_FILE_BYTES: "5242880"
       SHADOWOPS_SNAPSHOT_MAX_TOTAL_BYTES: "104857600"
       SHADOWOPS_SNAPSHOT_READ_CHUNK_BYTES: "1048576"
+      SHADOWOPS_SHADOW_POSTGRES_IMAGE: postgres:16@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+      SHADOWOPS_RUNNER_IMAGE: shadowops-runner:0.1.0
+      SHADOWOPS_SANDBOX_LEASE_SECONDS: "600"
+      SHADOWOPS_SANDBOX_READINESS_TIMEOUT_SECONDS: "30"
+      SHADOWOPS_SANDBOX_EXECUTION_TIMEOUT_SECONDS: "210"
     volumes: &shadowops-volumes
       - ${SHADOWOPS_REPO_ROOT_HOST:-./tests/fixtures/repositories}:/repositories:ro
       - shadowops-artifacts:/var/lib/shadowops/artifacts
@@ -73,8 +90,14 @@ services:
       - --schedule=/tmp/shadowops-celerybeat-schedule
       - --loglevel=INFO
     environment: *shadowops-environment
-    volumes: *shadowops-volumes
+    volumes:
+      - ${SHADOWOPS_REPO_ROOT_HOST:-./tests/fixtures/repositories}:/repositories:ro
+      - shadowops-artifacts:/var/lib/shadowops/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add: ["${SHADOWOPS_DOCKER_GID:-0}"]
     depends_on:
+      runner-image:
+        condition: service_completed_successfully
       control-postgres:
         condition: service_healthy
       redis:
