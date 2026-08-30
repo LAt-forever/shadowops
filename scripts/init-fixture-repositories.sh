@@ -27,7 +27,9 @@ commit_staged "$noop" "fixture: linear Alembic repository"
 
 for repository in \
     tests/fixtures/repositories/projects/safe-add-column \
-    tests/fixtures/repositories/projects/dangerous-drop
+    tests/fixtures/repositories/projects/dangerous-drop \
+    tests/fixtures/repositories/projects/broken-upgrade \
+    tests/fixtures/repositories/projects/slow-upgrade
 do
     configure_repository "$repository"
     if ! git -C "$repository" rev-parse --verify HEAD >/dev/null 2>&1; then

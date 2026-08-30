@@ -155,6 +155,7 @@ def test_create_run_returns_accepted_resource_and_location() -> None:
         "timeline": f"/api/v1/runs/{RUN_ID}/timeline",
         "static_report": f"/api/v1/runs/{RUN_ID}/static-report",
         "plan": f"/api/v1/runs/{RUN_ID}/plan",
+        "dynamic_result": f"/api/v1/runs/{RUN_ID}/dynamic-result",
     }
 
 

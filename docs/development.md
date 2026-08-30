@@ -41,7 +41,7 @@ docker compose logs --no-color api worker
 
 若本机 `8000` 已占用，可设置 `SHADOWOPS_HTTP_PORT_HOST=58000` 启动，并在测试时设置 `SHADOWOPS_API_BASE=http://127.0.0.1:58000`。`SHADOWOPS_REPO_ROOT_HOST` 只控制宿主机只读挂载来源；容器内可信根固定为 `/repositories`。
 
-## M3 手工检查
+## M4 手工检查
 
 创建任务后，内嵌 Celery Beat 的 worker 会周期调用 outbox dispatcher 与 reconciler，无需手工触发任务：
 
@@ -52,7 +52,9 @@ curl -i -X POST http://127.0.0.1:8000/api/v1/runs \
   -d '{"repository_path":"projects/m1-noop-demo"}'
 ```
 
-将响应的 id 代入 `/api/v1/runs/<run-id>`、`/timeline`、`/static-report`、`/plan` 或 `/events`。`DISCOVERING` 使用 `m2.discovery.v1` 生成快照和 revision graph，`STATIC_ANALYSIS` 使用 `m2.static-analysis.v1` 生成报告，`PLANNING` 使用 `m3.planning.v1` 生成受校验的 Fake Agent reference plan。到达 `COMPLETED` 表示 M3 以前的控制面切片成功；计划中的 Docker/数据库 capability 尚未执行，不能把它解释为动态数据库审计完成。
+将响应的 id 代入 `/api/v1/runs/<run-id>`、`/timeline`、`/static-report`、`/plan`、`/dynamic-result` 或 `/events`。`DISCOVERING`、`STATIC_ANALYSIS` 与 `PLANNING` 保持 M2/M3 的确定性行为；`PROVISIONING`、`BASELINE_READY` 与 `APPLYING` 分别执行 M4 的隔离环境创建、baseline upgrade 与 target apply。到达 `COMPLETED` 表示 M4 upgrade 切片成功并已完成资源清理，不代表 M5 的 seed/smoke/rollback 已执行。
+
+Worker 是唯一挂载 Docker socket 的受信任基础设施组件，等价于本机 Docker daemon 权限；Agent、Runner、API 与 migration 都不能访问该 socket。此信任模型只面向可信开发机上的本地单用户 Demo，不是敌对多租户沙箱。
 
 ## TDD 与里程碑规则
 

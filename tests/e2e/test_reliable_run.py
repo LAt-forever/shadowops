@@ -112,6 +112,104 @@ def _count_rows(table: str, run_id: str) -> int:
     return int(result.stdout.strip())
 
 
+def _scalar(query: str) -> str:
+    result = _compose(
+        "exec",
+        "-T",
+        "control-postgres",
+        "psql",
+        "-U",
+        "shadowops",
+        "-d",
+        "shadowops",
+        "-Atc",
+        query,
+    )
+    return result.stdout.strip()
+
+
+def _shadow_resource_count(run_id: str) -> int:
+    label = f"shadowops.run_id={UUID(run_id)}"
+    commands = (
+        ("docker", "ps", "-aq", "--filter", f"label={label}"),
+        ("docker", "network", "ls", "-q", "--filter", f"label={label}"),
+        ("docker", "volume", "ls", "-q", "--filter", f"label={label}"),
+    )
+    return sum(
+        len(subprocess.run(command, check=True, capture_output=True, text=True).stdout.splitlines())
+        for command in commands
+    )
+
+
+def _wait_for_runner(run_id: str, action: str, *, timeout: float = 30.0) -> str:
+    name = f"shadowops-{UUID(run_id).hex[:12]}-1-{action.lower()}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            (
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                f"label=shadowops.run_id={UUID(run_id)}",
+                "--filter",
+                "label=shadowops.role=runner",
+                "--filter",
+                f"name={name}",
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip():
+            return result.stdout.strip()
+        time.sleep(0.1)
+    raise AssertionError(f"run {run_id} did not start its {action} Runner container")
+
+
+def _assert_runner_is_hardened(container_id: str) -> None:
+    result = subprocess.run(
+        ("docker", "inspect", container_id),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    inspected = json.loads(result.stdout)[0]
+    host = inspected["HostConfig"]
+    assert inspected["Config"]["User"] == "10002:10002"
+    assert host["ReadonlyRootfs"] is True
+    assert host["CapDrop"] == ["ALL"]
+    assert "no-new-privileges:true" in host["SecurityOpt"]
+    assert host["PidsLimit"] == 64
+    assert host["Memory"] == 256 * 1024 * 1024
+    assert host["NanoCpus"] == 500_000_000
+    mounts = []
+    for mount in inspected["Mounts"]:
+        mounts.append((mount["Type"], mount["Destination"], mount["RW"]))
+    assert mounts == [("volume", "/repository", False)]
+    environment = inspected["Config"]["Env"]
+    assert not any(
+        forbidden in item
+        for item in environment
+        for forbidden in (
+            "SHADOWOPS_DATABASE_URL",
+            "SHADOWOPS_REDIS_URL",
+            "LLM",
+            "DOCKER_HOST",
+        )
+    )
+    network_ids = [item["NetworkID"] for item in inspected["NetworkSettings"]["Networks"].values()]
+    assert len(network_ids) == 1
+    network = subprocess.run(
+        ("docker", "network", "inspect", network_ids[0]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(network.stdout)[0]["Internal"] is True
+    assert inspected["NetworkSettings"]["Ports"] == {}
+
+
 def test_run_completes_idempotently_and_survives_api_restart() -> None:
     request_key = f"e2e-completion-{uuid4()}"
     first = _create(request_key)
@@ -237,6 +335,57 @@ def test_safe_changed_revision_produces_an_information_only_static_report() -> N
     assert report["risk_level"] == "INFO"
     assert report["findings"] == []
     assert report["revision_graph"]["changed_revisions"] == ["002"]
+    assert (
+        _scalar(f"SELECT status FROM shadow_environments WHERE run_id = '{UUID(str(run['id']))}'")
+        == "CLEANED"
+    )
+    assert _count_rows("runner_executions", str(run["id"])) == 2
+    assert _shadow_resource_count(str(run["id"])) == 0
+
+
+def test_broken_target_returns_structured_failure_and_cleans_resources() -> None:
+    run = _create(f"e2e-broken-upgrade-{uuid4()}", "projects/broken-upgrade")
+
+    failed = _wait_for_state(str(run["id"]), "FAILED", timeout=45.0)
+
+    assert failed["failure_code"] == "MIGRATION_FAILED"
+    dynamic = _request("GET", f"/api/v1/runs/{run['id']}/dynamic-result")
+    assert dynamic.status_code == 200
+    assert dynamic.json()["executions"][-1]["result"]["error_code"] == "MIGRATION_FAILED"
+    assert (
+        _scalar(f"SELECT status FROM shadow_environments WHERE run_id = '{UUID(str(run['id']))}'")
+        == "CLEANED"
+    )
+    assert (
+        _scalar(
+            "SELECT result->>'error_code' FROM runner_executions "
+            f"WHERE run_id = '{UUID(str(run['id']))}' AND action = 'APPLY_TARGET'"
+        )
+        == "MIGRATION_FAILED"
+    )
+    assert _shadow_resource_count(str(run["id"])) == 0
+
+
+def test_cancel_during_target_apply_finalizes_every_shadow_resource() -> None:
+    run = _create(f"e2e-cancel-upgrade-{uuid4()}", "projects/slow-upgrade")
+    runner_id = _wait_for_runner(str(run["id"]), "APPLY_TARGET")
+    _assert_runner_is_hardened(runner_id)
+    current = _request("GET", f"/api/v1/runs/{run['id']}").json()
+
+    response = _request(
+        "POST",
+        f"/api/v1/runs/{run['id']}/cancel",
+        json={"expected_version": current["version"]},
+    )
+
+    assert response.status_code == 202
+    terminal = _wait_for_state(str(run["id"]), "CANCELLED", timeout=45.0)
+    assert terminal["state"] == "CANCELLED"
+    assert (
+        _scalar(f"SELECT status FROM shadow_environments WHERE run_id = '{UUID(str(run['id']))}'")
+        == "CLEANED"
+    )
+    assert _shadow_resource_count(str(run["id"])) == 0
 
 
 def test_dangerous_changed_revision_produces_located_high_risk_findings() -> None:

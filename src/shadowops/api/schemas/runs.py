@@ -67,6 +67,7 @@ class AuditRunViewV1(BaseModel):
     state: RunState
     version: int = Field(ge=1)
     execution_profile: str = "m3.fake-agent.v1"
+    failure_code: str | None = None
     cancel_requested_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

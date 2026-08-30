@@ -62,6 +62,14 @@ class MemoryStepRepository:
         existing.lease_expires_at = candidate.lease_expires_at
         return deepcopy(existing)
 
+    def get_current(self, run_id: UUID) -> RunStep | None:
+        matches = [
+            step
+            for step in self._store.steps.values()
+            if step.run_id == run_id and step.status is StepStatus.RUNNING
+        ]
+        return None if not matches else deepcopy(matches[-1])
+
     def heartbeat(
         self,
         step_id: UUID,
@@ -320,6 +328,19 @@ def test_cancel_requested_during_execution_wins_at_finalize_checkpoint() -> None
     assert run.state is RunState.CANCELLED
     assert store.steps[claim.step_key].to_state is RunState.CANCELLED
     assert len(store.events) == 1
+
+
+def test_cancel_redelivery_does_not_claim_beside_an_active_stage() -> None:
+    store = _store()
+    service = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN])
+    claim = service.claim(EVENT_ID, worker_id="worker-a")
+    assert claim is not None
+    store.runs[RUN_ID].cancel_requested_at = STARTED_AT
+
+    duplicate = _service(store, STARTED_AT, []).claim(EVENT_ID, worker_id="worker-b")
+
+    assert duplicate is None
+    assert list(store.steps) == [claim.step_key]
 
 
 def test_fail_fences_step_and_terminates_run_without_next_event() -> None:

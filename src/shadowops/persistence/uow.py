@@ -11,6 +11,7 @@ from shadowops.persistence.repositories import (
     SqlAlchemyRevisionGraphRepository,
     SqlAlchemyRunRepository,
     SqlAlchemyRunStepRepository,
+    SqlAlchemySandboxRepository,
     SqlAlchemyStaticReportRepository,
 )
 
@@ -30,6 +31,7 @@ class SqlAlchemyUnitOfWork:
         self.revision_graphs = SqlAlchemyRevisionGraphRepository(self.session)
         self.static_reports = SqlAlchemyStaticReportRepository(self.session)
         self.agent_planning = SqlAlchemyAgentPlanningRepository(self.session)
+        self.sandbox = SqlAlchemySandboxRepository(self.session)
         self._committed = False
         return self
 

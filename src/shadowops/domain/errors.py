@@ -85,6 +85,13 @@ class AuditPlanNotReadyError(DomainError):
         super().__init__(f"Audit plan for run {run_id} is not ready")
 
 
+class DynamicAuditNotReadyError(DomainError):
+    code = "DYNAMIC_AUDIT_NOT_READY"
+
+    def __init__(self, run_id: Any) -> None:
+        super().__init__(f"Dynamic audit for run {run_id} is not ready")
+
+
 class ClaimLostError(DomainError):
     """Raised when an expired worker attempts to mutate a reclaimed step."""
 

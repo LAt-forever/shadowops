@@ -34,7 +34,7 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check .
       - name: Mypy
-        run: uv run mypy src
+        run: uv run mypy src runner/src
       - name: Unit and contract tests
         run: uv run pytest tests/unit tests/contract -v
 
@@ -59,6 +59,8 @@ jobs:
         run: docker compose -f compose.yaml -f compose.test.yaml config --quiet
       - name: Initialize deterministic fixture repositories
         run: bash scripts/init-fixture-repositories.sh
+      - name: Allow the non-root Worker to access Docker Engine
+        run: echo "SHADOWOPS_DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" >> "$GITHUB_ENV"
       - name: Start services
         run: docker compose -f compose.yaml -f compose.test.yaml up --build --detach --wait
       - name: Upgrade control database

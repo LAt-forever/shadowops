@@ -1,6 +1,6 @@
 # ShadowOps
 
-ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M3 受限 Fake Agent 规划**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 Alembic revision graph，输出证据化静态报告，并由受约束 Agent 生成可查询、可恢复的能力计划。影子数据库执行和真实 LLM 仍在后续里程碑。
+ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M4 动态 Alembic upgrade**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 revision graph，由受约束 Fake Agent 生成能力计划，再由确定性 orchestrator 在隔离 PostgreSQL 16 环境中执行 baseline 与 target upgrade。真实 LLM 仍在后续里程碑。
 
 ## 当前已实现
 
@@ -20,6 +20,12 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 - Plan Validator 强制 mandatory capability、预算上限、依赖前置条件和无环结构；畸形 JSON/schema 只允许一次修复，预算耗尽后以稳定 `PLAN_INVALID` 失败。
 - prompt/tool schema、输入/输出 hash、Agent invocation 与 tool-call trace 均持久化；相同 Fake 输入得到确定性的 reference plan 和 trace identity。
 - `GET /api/v1/runs/{id}/plan` 返回版本化计划；尚未完成 PLANNING 时返回稳定的 `AUDIT_PLAN_NOT_READY`。
+- `RunnerRequestV1` 只接受固定 action、revision、Shadow DB alias 与预算，不接受 command、image、network 或 host path；Runner 镜像与 PostgreSQL 16 镜像由服务配置固定并记录 content-addressed image ID。
+- 每个 `run + generation` 使用带 lease/标签的 internal network、PostgreSQL 数据卷和只读 snapshot 卷；相同 environment/action 的持久化唯一键阻止重复 apply。
+- Runner 以 UID 10002、只读 rootfs、`cap_drop=ALL`、`no-new-privileges`、tmpfs、CPU/内存/PID/时长限制运行；只获得临时 Shadow DB 凭据，不挂载 Docker socket、控制库 DSN、Redis URL、LLM secret 或宿主任意路径。
+- baseline 与 target upgrade 分阶段执行，数据库 statement timeout 和 wall-clock timeout 双重限制；stdout/stderr 受大小限制、SHA-256 校验并脱敏后持久化。
+- finalizer 在成功、结构化失败与协作式取消后删除 Runner/PostgreSQL 容器、internal network 和临时卷；周期 Sweeper 按过期 lease 回收孤儿资源。
+- `GET /api/v1/runs/{id}/dynamic-result` 返回 environment 清理状态、版本化 Runner request/result、current revision 与受控 stdout/stderr artifact。
 - HTTP idempotency key、重复 broker 消息幂等、协作式取消。
 - 可查询 timeline 与支持 `Last-Event-ID` 恢复的 SSE 状态流。
 - Redis 仅作 broker，权威任务状态保存在 PostgreSQL；worker 非 root 运行。
@@ -30,7 +36,7 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 
 当前**没有 Web 可视化界面**。现阶段可见产物是 REST JSON 静态报告、SSE 时间线、结构化日志和 PostgreSQL 持久状态；任务列表、详情页、findings 与证据报告 UI 计划在 M7 实现。
 
-当前 Agent 是可复现的 Fake Provider，只负责生成并校验计划；计划中的八个 capability 在 M3 **不会执行**。影子 PostgreSQL 动态验证从 M4 开始，真实 LLM 与证据解释在 M6，本地 Web UI 和人工审批在 M7。
+当前 Agent 是可复现的 Fake Provider，只负责生成并校验计划。M4 只执行其中的 provision、baseline upgrade、target apply 与 cleanup；test data、smoke checks、rollback roundtrip 和完整 evidence collection 留在 M5。真实 LLM 与证据解释在 M6，本地 Web UI 和人工审批在 M7。
 
 ## 本地启动
 
@@ -50,7 +56,7 @@ uv run shadowops ping --api-url http://127.0.0.1:8000
 docker compose down --volumes
 ```
 
-## M3 API 示例
+## M4 API 示例
 
 创建 run；相同 `Idempotency-Key` 与相同请求会返回同一个 run：
 
@@ -68,6 +74,7 @@ curl http://127.0.0.1:8000/api/v1/runs/<run-id>
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/timeline
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/static-report
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/plan
+curl http://127.0.0.1:8000/api/v1/runs/<run-id>/dynamic-result
 curl -N -H 'Last-Event-ID: 0' http://127.0.0.1:8000/api/v1/runs/<run-id>/events
 ```
 
@@ -96,3 +103,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/runs/<run-id>/cancel \
 - [M2A 验证交接](./docs/handoffs/M2A.md)
 - [M2B 验证交接](./docs/handoffs/M2B.md)
 - [M3 验证交接](./docs/handoffs/M3.md)
+- [M4 验证交接](./docs/handoffs/M4.md)

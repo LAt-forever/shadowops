@@ -31,7 +31,9 @@ from shadowops.persistence.models import (
     OutboxEventModel,
     RepoSnapshotModel,
     RevisionGraphModel,
+    RunnerExecutionModel,
     RunStepModel,
+    ShadowEnvironmentModel,
     StaticReportModel,
 )
 from shadowops.repository.contracts import (
@@ -42,6 +44,13 @@ from shadowops.repository.contracts import (
     UnsupportedReasonV1,
 )
 from shadowops.rules.contracts import StaticReportV1
+from shadowops.sandbox.contracts import (
+    RunnerAction,
+    RunnerExecutionV1,
+    ShadowEnvironmentLease,
+    ShadowEnvironmentStatus,
+    ShadowEnvironmentV1,
+)
 
 
 def _to_run(model: AuditRunModel) -> AuditRun:
@@ -744,3 +753,147 @@ class SqlAlchemyAgentPlanningRepository:
         ):
             raise ImmutableResultConflict("audit plan")
         return existing
+
+
+class SqlAlchemySandboxRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    @staticmethod
+    def _lease(model: ShadowEnvironmentModel) -> ShadowEnvironmentLease:
+        environment = ShadowEnvironmentV1.model_validate(
+            {
+                "id": model.id,
+                "run_id": model.run_id,
+                "generation": model.generation,
+                "schema_version": model.schema_version,
+                "status": model.status,
+                "postgres_container_id": model.postgres_container_id,
+                "network_id": model.network_id,
+                "volume_name": model.volume_name,
+                "snapshot_volume_name": model.snapshot_volume_name,
+                "postgres_image": model.postgres_image,
+                "postgres_image_id": model.postgres_image_id,
+                "runner_image": model.runner_image,
+                "runner_image_id": model.runner_image_id,
+                "lease_expires_at": model.lease_expires_at,
+                "created_at": model.created_at,
+                "cleaned_at": model.cleaned_at,
+            }
+        )
+        return ShadowEnvironmentLease(environment, model.database_password)
+
+    def get_environment(self, run_id: UUID, generation: int) -> ShadowEnvironmentLease | None:
+        model = self._session.scalar(
+            select(ShadowEnvironmentModel).where(
+                ShadowEnvironmentModel.run_id == run_id,
+                ShadowEnvironmentModel.generation == generation,
+            )
+        )
+        return None if model is None else self._lease(model)
+
+    def create_or_get_environment(
+        self, environment: ShadowEnvironmentV1, *, database_password: str
+    ) -> ShadowEnvironmentLease:
+        values = environment.model_dump(mode="python")
+        values["status"] = environment.status.value
+        values["database_password"] = database_password
+        self._session.execute(
+            insert(ShadowEnvironmentModel)
+            .values(**values)
+            .on_conflict_do_nothing(constraint="uq_shadow_run_generation")
+        )
+        existing = self.get_environment(environment.run_id, environment.generation)
+        if existing is None:
+            raise RuntimeError("Shadow environment upsert did not expose a durable result")
+        if existing.environment.model_dump(exclude={"id", "created_at"}) != environment.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("shadow environment")
+        return existing
+
+    def set_environment_status(
+        self,
+        environment_id: UUID,
+        *,
+        status: ShadowEnvironmentStatus,
+        cleaned_at: datetime | None,
+    ) -> bool:
+        result = cast(
+            CursorResult[Any],
+            self._session.execute(
+                update(ShadowEnvironmentModel)
+                .where(ShadowEnvironmentModel.id == environment_id)
+                .values(status=status.value, cleaned_at=cleaned_at)
+            ),
+        )
+        return result.rowcount == 1
+
+    def get_execution(self, environment_id: UUID, action: RunnerAction) -> RunnerExecutionV1 | None:
+        model = self._session.scalar(
+            select(RunnerExecutionModel).where(
+                RunnerExecutionModel.environment_id == environment_id,
+                RunnerExecutionModel.action == action.value,
+            )
+        )
+        if model is None:
+            return None
+        return RunnerExecutionV1.model_validate(
+            {
+                "id": model.id,
+                "environment_id": model.environment_id,
+                "run_id": model.run_id,
+                "generation": model.generation,
+                "schema_version": model.schema_version,
+                "request": model.request,
+                "result": model.result,
+                "created_at": model.created_at,
+            }
+        )
+
+    def create_or_get_execution(self, execution: RunnerExecutionV1) -> RunnerExecutionV1:
+        self._session.execute(
+            insert(RunnerExecutionModel)
+            .values(
+                id=execution.id,
+                environment_id=execution.environment_id,
+                run_id=execution.run_id,
+                generation=execution.generation,
+                schema_version=execution.schema_version,
+                action=execution.request.action.value,
+                request=execution.request.model_dump(mode="json"),
+                result=execution.result.model_dump(mode="json"),
+                created_at=execution.created_at,
+            )
+            .on_conflict_do_nothing(constraint="uq_runner_environment_action")
+        )
+        existing = self.get_execution(execution.environment_id, execution.request.action)
+        if existing is None:
+            raise RuntimeError("Runner execution upsert did not expose a durable result")
+        if existing.model_dump(exclude={"id", "created_at"}) != execution.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("runner execution")
+        return existing
+
+    def list_executions(self, environment_id: UUID) -> list[RunnerExecutionV1]:
+        models = self._session.scalars(
+            select(RunnerExecutionModel)
+            .where(RunnerExecutionModel.environment_id == environment_id)
+            .order_by(RunnerExecutionModel.created_at, RunnerExecutionModel.id)
+        ).all()
+        return [
+            RunnerExecutionV1.model_validate(
+                {
+                    "id": model.id,
+                    "environment_id": model.environment_id,
+                    "run_id": model.run_id,
+                    "generation": model.generation,
+                    "schema_version": model.schema_version,
+                    "request": model.request,
+                    "result": model.result,
+                    "created_at": model.created_at,
+                }
+            )
+            for model in models
+        ]

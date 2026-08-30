@@ -1,0 +1,112 @@
+"""Versioned contracts between the trusted orchestrator and fixed Runner."""
+
+import hashlib
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from typing import Literal, Self
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class StrictContract(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class RunnerAction(StrEnum):
+    UPGRADE_BASELINE = "UPGRADE_BASELINE"
+    APPLY_TARGET = "APPLY_TARGET"
+
+
+class RunnerStatus(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class RunnerRequestV1(StrictContract):
+    schema_version: Literal["1.0"] = "1.0"
+    action: RunnerAction
+    revision: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_.-]+$")
+    database_alias: Literal["shadow-postgres"] = "shadow-postgres"
+    statement_timeout_ms: int = Field(ge=100, le=120_000)
+    output_limit_bytes: int = Field(ge=1_024, le=262_144)
+
+
+class BoundedArtifactV1(StrictContract):
+    media_type: Literal["text/plain"] = "text/plain"
+    byte_count: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    truncated: bool
+    text: str
+
+    @model_validator(mode="after")
+    def validate_content_identity(self) -> Self:
+        content = self.text.encode()
+        if len(content) != self.byte_count or hashlib.sha256(content).hexdigest() != self.sha256:
+            raise ValueError("artifact size or hash does not match its bounded text")
+        return self
+
+
+class RunnerResultV1(StrictContract):
+    schema_version: Literal["1.0"] = "1.0"
+    action: RunnerAction
+    status: RunnerStatus
+    error_code: str | None = Field(default=None, max_length=64)
+    error_detail: str | None = Field(default=None, max_length=500)
+    current_revision: str | None = Field(default=None, max_length=255)
+    duration_ms: int = Field(ge=0)
+    stdout: BoundedArtifactV1
+    stderr: BoundedArtifactV1
+
+
+class ShadowEnvironmentStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    CLEANED = "CLEANED"
+    CLEANUP_FAILED = "CLEANUP_FAILED"
+
+
+class ShadowEnvironmentV1(StrictContract):
+    schema_version: Literal["1.0"] = "1.0"
+    id: UUID
+    run_id: UUID
+    generation: int = Field(ge=1)
+    status: ShadowEnvironmentStatus
+    postgres_container_id: str = Field(max_length=128)
+    network_id: str = Field(max_length=128)
+    volume_name: str = Field(max_length=255)
+    snapshot_volume_name: str = Field(max_length=255)
+    postgres_image: str = Field(max_length=255)
+    postgres_image_id: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    runner_image: str = Field(max_length=255)
+    runner_image_id: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    lease_expires_at: datetime
+    created_at: datetime
+    cleaned_at: datetime | None = None
+
+
+class RunnerExecutionV1(StrictContract):
+    schema_version: Literal["1.0"] = "1.0"
+    id: UUID
+    environment_id: UUID
+    run_id: UUID
+    generation: int = Field(ge=1)
+    request: RunnerRequestV1
+    result: RunnerResultV1
+    created_at: datetime
+
+
+class DynamicAuditViewV1(StrictContract):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: UUID
+    generation: int = Field(ge=1)
+    environment: ShadowEnvironmentV1
+    executions: tuple[RunnerExecutionV1, ...]
+
+
+@dataclass(frozen=True)
+class ShadowEnvironmentLease:
+    """Trusted control-plane record; the password is never serialized to Agent contracts."""
+
+    environment: ShadowEnvironmentV1
+    database_password: str

@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     snapshot_max_file_bytes: int = 5 * 1024 * 1024
     snapshot_max_total_bytes: int = 100 * 1024 * 1024
     snapshot_read_chunk_bytes: int = 1024 * 1024
+    shadow_postgres_image: str = (
+        "postgres:16@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae"
+    )
+    runner_image: str = "shadowops-runner:0.1.0"
+    sandbox_lease_seconds: int = 600
+    sandbox_readiness_timeout_seconds: int = 30
+    sandbox_execution_timeout_seconds: int = 210
+    sandbox_sweep_interval_seconds: float = 30.0
 
 
 @lru_cache
