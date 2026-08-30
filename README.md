@@ -1,20 +1,25 @@
 # ShadowOps
 
-ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M2 静态审计**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 Alembic revision graph，并输出可查询、可恢复的证据化静态风险报告。Agent 循环和影子数据库仍在后续里程碑。
+ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M3 受限 Fake Agent 规划**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 Alembic revision graph，输出证据化静态报告，并由受约束 Agent 生成可查询、可恢复的能力计划。影子数据库执行和真实 LLM 仍在后续里程碑。
 
 ## 当前已实现
 
 - Python 3.12 `src` 工程、锁定依赖与结构化 JSON 日志。
 - FastAPI health API，以及创建、查询、取消 audit run 的版本化 API。
-- PostgreSQL 持久化的 `audit_runs`、`run_steps`、`outbox_events`、`repo_snapshots`、`revision_graphs`、`static_reports` 与乐观版本控制。
+- PostgreSQL 持久化的 `audit_runs`、`run_steps`、`outbox_events`、`repo_snapshots`、`revision_graphs`、`static_reports`、`agent_invocations`、`agent_tool_calls`、`audit_plans` 与乐观版本控制。
 - Transactional outbox、Celery 幂等消费、step claim/heartbeat/fencing 与 reconciler 恢复。
-- 显式状态转换：`DISCOVERING` 执行安全发现，`STATIC_ANALYSIS` 执行确定性规则，其余阶段暂沿 M1 no-op 状态链推进；非法跳转被拒绝。
+- 显式状态转换：`DISCOVERING` 执行安全发现，`STATIC_ANALYSIS` 执行确定性规则，`PLANNING` 执行 M3 Agent 规划，其余阶段暂沿 M1 no-op 状态链推进；非法跳转被拒绝。
 - 单一 allowed root、相对路径校验、symlink/特殊文件/硬链接拒绝、文件与总量预算，以及默认凭据文件排除。
 - `WORKING_TREE` 与 `RANGE` Git selector；不 checkout、不写源仓库、不通过 shell 执行 Git。
 - content-addressed 只读快照 artifact，以及只用 AST 读取 Alembic 元数据的线性 revision graph 发现；仓库 Python 从不 import 或执行。
 - 四条聚焦静态规则：破坏性 DDL、直接新增 NOT NULL、非并发索引、缺失或显式不可逆 downgrade。
 - 每个 finding 包含规则版本、严重度、置信度、相对文件位置、修复建议、显式 unknowns 与确定性 evidence ID；不支持的 revision 结构形成独立高风险 finding。
 - `GET /api/v1/runs/{id}/static-report` 返回 PostgreSQL 中的版本化 JSON 报告；重复执行收敛到同一份不可变结果。
+- `AuditPlanV1` 只允许固定 capability、DAG 依赖、预算、原因和 evidence refs；不存在命令字符串、镜像、网络或宿主路径字段。
+- 单一 Fake Agent 通过五个只读工具读取 revision graph、相关 revision、静态 findings、固定 capability catalog 和测试数据覆盖缺口；工具不能执行 shell、Docker 或数据库变更。
+- Plan Validator 强制 mandatory capability、预算上限、依赖前置条件和无环结构；畸形 JSON/schema 只允许一次修复，预算耗尽后以稳定 `PLAN_INVALID` 失败。
+- prompt/tool schema、输入/输出 hash、Agent invocation 与 tool-call trace 均持久化；相同 Fake 输入得到确定性的 reference plan 和 trace identity。
+- `GET /api/v1/runs/{id}/plan` 返回版本化计划；尚未完成 PLANNING 时返回稳定的 `AUDIT_PLAN_NOT_READY`。
 - HTTP idempotency key、重复 broker 消息幂等、协作式取消。
 - 可查询 timeline 与支持 `Last-Event-ID` 恢复的 SSE 状态流。
 - Redis 仅作 broker，权威任务状态保存在 PostgreSQL；worker 非 root 运行。
@@ -25,7 +30,7 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 
 当前**没有 Web 可视化界面**。现阶段可见产物是 REST JSON 静态报告、SSE 时间线、结构化日志和 PostgreSQL 持久状态；任务列表、详情页、findings 与证据报告 UI 计划在 M7 实现。
 
-当前已经完成 Migration 配置/revision 发现与首批四条静态规则，但**还没有**Agent 规划、影子数据库动态执行、LLM 证据解释或人工审批；这些按精简后的开发计划在后续里程碑实现。
+当前 Agent 是可复现的 Fake Provider，只负责生成并校验计划；计划中的八个 capability 在 M3 **不会执行**。影子 PostgreSQL 动态验证从 M4 开始，真实 LLM 与证据解释在 M6，本地 Web UI 和人工审批在 M7。
 
 ## 本地启动
 
@@ -45,7 +50,7 @@ uv run shadowops ping --api-url http://127.0.0.1:8000
 docker compose down --volumes
 ```
 
-## M2 API 示例
+## M3 API 示例
 
 创建 run；相同 `Idempotency-Key` 与相同请求会返回同一个 run：
 
@@ -62,6 +67,7 @@ curl -i -X POST http://127.0.0.1:8000/api/v1/runs \
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/timeline
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/static-report
+curl http://127.0.0.1:8000/api/v1/runs/<run-id>/plan
 curl -N -H 'Last-Event-ID: 0' http://127.0.0.1:8000/api/v1/runs/<run-id>/events
 ```
 
@@ -89,3 +95,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/runs/<run-id>/cancel \
 - [M2A 设计](./docs/superpowers/specs/2026-08-25-m2-agent-context-static-audit-design.md)
 - [M2A 验证交接](./docs/handoffs/M2A.md)
 - [M2B 验证交接](./docs/handoffs/M2B.md)
+- [M3 验证交接](./docs/handoffs/M3.md)

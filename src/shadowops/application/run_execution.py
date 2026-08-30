@@ -174,4 +174,6 @@ class RunExecutionService:
             return "m2.discovery.v1"
         if target is RunState.STATIC_ANALYSIS:
             return "m2.static-analysis.v1"
+        if target is RunState.PLANNING:
+            return "m3.planning.v1"
         return "m1.noop.v1"

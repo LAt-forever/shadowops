@@ -5,14 +5,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
+from shadowops.agent.contracts import AuditPlanRecordV1
 from shadowops.api.schemas.runs import (
     AuditRunViewV1,
     CancelAuditRunRequestV1,
     CreateAuditRunRequestV1,
 )
+from shadowops.application.planning import AuditPlanQueryService
 from shadowops.application.runs import RunService
 from shadowops.application.static_analysis import StaticReportQueryService
 from shadowops.domain.errors import (
+    AuditPlanNotReadyError,
     IdempotencyConflictError,
     OptimisticConcurrencyError,
     RunNotFoundError,
@@ -45,6 +48,16 @@ def _report_service(request: Request) -> StaticReportQueryService:
     return service
 
 
+def _plan_service(request: Request) -> AuditPlanQueryService:
+    service: AuditPlanQueryService | None = request.app.state.plan_service
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "AUDIT_PLAN_SERVICE_UNAVAILABLE"},
+        )
+    return service
+
+
 def _view(run: AuditRun) -> AuditRunViewV1:
     base = f"/api/v1/runs/{run.id}"
     return AuditRunViewV1(
@@ -60,6 +73,7 @@ def _view(run: AuditRun) -> AuditRunViewV1:
             "events": f"{base}/events",
             "timeline": f"{base}/timeline",
             "static_report": f"{base}/static-report",
+            "plan": f"{base}/plan",
         },
     )
 
@@ -101,6 +115,20 @@ def get_static_report(run_id: UUID, request: Request) -> StaticReportV1:
             status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
         ) from error
     except StaticReportNotReadyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
+        ) from error
+
+
+@router.get("/{run_id}/plan", response_model=AuditPlanRecordV1)
+def get_audit_plan(run_id: UUID, request: Request) -> AuditPlanRecordV1:
+    try:
+        return _plan_service(request).get(run_id)
+    except RunNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
+        ) from error
+    except AuditPlanNotReadyError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
         ) from error

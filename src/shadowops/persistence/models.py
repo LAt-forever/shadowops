@@ -169,3 +169,65 @@ class StaticReportModel(Base):
     risk_level: Mapped[str] = mapped_column(String(16))
     report: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentInvocationModel(Base):
+    __tablename__ = "agent_invocations"
+    __table_args__ = (UniqueConstraint("run_id", "phase", name="uq_agent_run_phase"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    phase: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128))
+    prompt_version: Mapped[str] = mapped_column(String(64))
+    tool_schema_version: Mapped[str] = mapped_column(String(64))
+    input_hash: Mapped[str] = mapped_column(String(64))
+    output_hash: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32))
+    repair_attempts: Mapped[int] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentToolCallModel(Base):
+    __tablename__ = "agent_tool_calls"
+    __table_args__ = (
+        UniqueConstraint("invocation_id", "sequence", name="uq_agent_tool_call_sequence"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    invocation_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("agent_invocations.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    tool_name: Mapped[str] = mapped_column(String(64))
+    tool_version: Mapped[str] = mapped_column(String(32))
+    arguments_hash: Mapped[str] = mapped_column(String(64))
+    result_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32))
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    correlation_id: Mapped[str] = mapped_column(String(64))
+    observation: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+
+class AuditPlanModel(Base):
+    __tablename__ = "audit_plans"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    invocation_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("agent_invocations.id", ondelete="CASCADE"), nullable=False
+    )
+    input_hash: Mapped[str] = mapped_column(String(64))
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

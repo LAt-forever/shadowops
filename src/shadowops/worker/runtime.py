@@ -6,7 +6,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from shadowops.agent.gateway import ReadOnlyToolGateway
+from shadowops.agent.provider import FakeAgentProvider
+from shadowops.agent.runtime import AgentPlanner
 from shadowops.application.discovery import DiscoveryStageHandler, NoOpStageHandler, StageHandler
+from shadowops.application.planning import PlanningStageHandler
 from shadowops.application.run_execution import RunExecutionService
 from shadowops.application.static_analysis import StaticAnalysisStageHandler
 from shadowops.config import get_settings
@@ -71,6 +75,16 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
             max_source_bytes=settings.snapshot_max_file_bytes,
         ),
     )
+    planning = PlanningStageHandler(
+        uow_factory,
+        AgentPlanner(
+            FakeAgentProvider(),
+            ReadOnlyToolGateway(
+                uow_factory,
+                SnapshotReader(settings.artifact_root, snapshot_lookup),
+            ),
+        ),
+    )
     noop = NoOpStageHandler()
     return {
         state: (
@@ -78,6 +92,8 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
             if state is RunState.DISCOVERING
             else static_analysis
             if state is RunState.STATIC_ANALYSIS
+            else planning
+            if state is RunState.PLANNING
             else noop
         )
         for state in RunState

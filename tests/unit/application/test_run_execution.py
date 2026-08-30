@@ -227,6 +227,26 @@ def test_static_analysis_claim_uses_the_real_m2_handler_version() -> None:
     assert claim.handler_version == "m2.static-analysis.v1"
 
 
+def test_planning_claim_uses_the_bounded_m3_handler_version() -> None:
+    store = _store()
+    store.runs[RUN_ID].state = RunState.STATIC_ANALYSIS
+    store.runs[RUN_ID].version = 3
+    store.events[EVENT_ID].aggregate_version = 3
+    store.events[EVENT_ID].payload = {
+        "run_id": str(RUN_ID),
+        "expected_state": "STATIC_ANALYSIS",
+        "expected_version": 3,
+    }
+
+    claim = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN]).claim(
+        EVENT_ID, worker_id="worker-a"
+    )
+
+    assert claim is not None
+    assert claim.to_state is RunState.PLANNING
+    assert claim.handler_version == "m3.planning.v1"
+
+
 def test_duplicate_message_after_finalize_is_an_idempotent_noop() -> None:
     store = _store()
     service = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN, NEXT_EVENT_ID])
