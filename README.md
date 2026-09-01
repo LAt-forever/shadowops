@@ -1,6 +1,6 @@
 # ShadowOps
 
-ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M4 动态 Alembic upgrade**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 revision graph，由受约束 Fake Agent 生成能力计划，再由确定性 orchestrator 在隔离 PostgreSQL 16 环境中执行 baseline 与 target upgrade。真实 LLM 仍在后续里程碑。
+ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M5 动态证据闭环**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 revision graph，由受约束 Fake Agent 生成能力计划，再由确定性 orchestrator 在隔离 PostgreSQL 16 环境中执行 upgrade、seed、smoke checks 与 rollback roundtrip。真实 LLM 仍在后续里程碑。
 
 ## 当前已实现
 
@@ -8,7 +8,7 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 - FastAPI health API，以及创建、查询、取消 audit run 的版本化 API。
 - PostgreSQL 持久化的 `audit_runs`、`run_steps`、`outbox_events`、`repo_snapshots`、`revision_graphs`、`static_reports`、`agent_invocations`、`agent_tool_calls`、`audit_plans` 与乐观版本控制。
 - Transactional outbox、Celery 幂等消费、step claim/heartbeat/fencing 与 reconciler 恢复。
-- 显式状态转换：`DISCOVERING` 执行安全发现，`STATIC_ANALYSIS` 执行确定性规则，`PLANNING` 执行 M3 Agent 规划，其余阶段暂沿 M1 no-op 状态链推进；非法跳转被拒绝。
+- 显式状态转换：安全发现、静态分析、Agent 规划、影子环境 provisioning/upgrade、seed、smoke、rollback verification 与 evidence collection 各自由固定 handler 驱动；非法跳转被拒绝。
 - 单一 allowed root、相对路径校验、symlink/特殊文件/硬链接拒绝、文件与总量预算，以及默认凭据文件排除。
 - `WORKING_TREE` 与 `RANGE` Git selector；不 checkout、不写源仓库、不通过 shell 执行 Git。
 - content-addressed 只读快照 artifact，以及只用 AST 读取 Alembic 元数据的线性 revision graph 发现；仓库 Python 从不 import 或执行。
@@ -26,6 +26,11 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 - baseline 与 target upgrade 分阶段执行，数据库 statement timeout 和 wall-clock timeout 双重限制；stdout/stderr 受大小限制、SHA-256 校验并脱敏后持久化。
 - finalizer 在成功、结构化失败与协作式取消后删除 Runner/PostgreSQL 容器、internal network 和临时卷；周期 Sweeper 按过期 lease 回收孤儿资源。
 - `GET /api/v1/runs/{id}/dynamic-result` 返回 environment 清理状态、版本化 Runner request/result、current revision 与受控 stdout/stderr artifact。
+- 显式 `shadowops-fixture.json` 经过固定 schema、标识符、scalar value 与行数预算校验；没有 manifest 时只对受支持的基础类型生成有限确定性 seed，不支持的类型、外键或缺失 baseline 会成为 coverage gap。
+- smoke checks 记录规范化 schema fingerprint、逐表 row count、约束数量与未验证约束；不会读取或返回实际业务行值。
+- rollback roundtrip 固定执行 `target → baseline → target`，比较 revision、schema fingerprint 与 row-count fingerprint；downgrade 异常或恢复不一致以稳定 `ROLLBACK_FAILED` 终止。
+- Runner observation 与已脱敏 stdout/stderr 写入本地 content-addressed artifact store；临时文件 `fsync` 后原子 rename，控制库仅保存 URI、hash、大小、scope 与 redaction metadata。
+- evidence 明确区分 `observed_in_shadow` 与 `unknown_in_production`；shadow seed 成功不代表生产数据分布、锁行为或兼容性已被覆盖。
 - HTTP idempotency key、重复 broker 消息幂等、协作式取消。
 - 可查询 timeline 与支持 `Last-Event-ID` 恢复的 SSE 状态流。
 - Redis 仅作 broker，权威任务状态保存在 PostgreSQL；worker 非 root 运行。
@@ -36,7 +41,7 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 
 当前**没有 Web 可视化界面**。现阶段可见产物是 REST JSON 静态报告、SSE 时间线、结构化日志和 PostgreSQL 持久状态；任务列表、详情页、findings 与证据报告 UI 计划在 M7 实现。
 
-当前 Agent 是可复现的 Fake Provider，只负责生成并校验计划。M4 只执行其中的 provision、baseline upgrade、target apply 与 cleanup；test data、smoke checks、rollback roundtrip 和完整 evidence collection 留在 M5。真实 LLM 与证据解释在 M6，本地 Web UI 和人工审批在 M7。
+当前 Agent 是可复现的 Fake Provider，只负责生成并校验计划。M5 的全部执行参数仍由确定性 orchestrator 与固定 Runner 选择；Agent 不能提交 SQL、shell、镜像、网络、凭据或宿主路径。真实 LLM、风险报告与 Policy Engine 在 M6，本地 Web UI 和人工审批在 M7。
 
 ## 本地启动
 
@@ -56,7 +61,7 @@ uv run shadowops ping --api-url http://127.0.0.1:8000
 docker compose down --volumes
 ```
 
-## M4 API 示例
+## M5 API 示例
 
 创建 run；相同 `Idempotency-Key` 与相同请求会返回同一个 run：
 
@@ -104,3 +109,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/runs/<run-id>/cancel \
 - [M2B 验证交接](./docs/handoffs/M2B.md)
 - [M3 验证交接](./docs/handoffs/M3.md)
 - [M4 验证交接](./docs/handoffs/M4.md)
+- [M5 验证交接](./docs/handoffs/M5.md)

@@ -1,11 +1,14 @@
 import hashlib
+import json
 
 import pytest
 from pydantic import ValidationError
 
 from shadowops.sandbox.contracts import (
     BoundedArtifactV1,
+    ObservationKind,
     RunnerAction,
+    RunnerObservationV1,
     RunnerRequestV1,
     RunnerResultV1,
     RunnerStatus,
@@ -73,4 +76,43 @@ def test_runner_contract_rejects_invalid_revision_and_unbounded_output() -> None
             revision="head; rm -rf /",
             statement_timeout_ms=30_000,
             output_limit_bytes=1_000_000,
+        )
+
+
+def test_rollback_request_requires_a_bounded_baseline_revision() -> None:
+    with pytest.raises(ValidationError):
+        RunnerRequestV1(
+            action=RunnerAction.VERIFY_ROLLBACK_ROUNDTRIP,
+            revision="002",
+            statement_timeout_ms=30_000,
+            output_limit_bytes=65_536,
+        )
+
+    request = RunnerRequestV1(
+        action=RunnerAction.VERIFY_ROLLBACK_ROUNDTRIP,
+        revision="002",
+        baseline_revision="001",
+        statement_timeout_ms=30_000,
+        output_limit_bytes=65_536,
+    )
+
+    assert request.baseline_revision == "001"
+
+
+def test_structured_observation_is_content_identified() -> None:
+    data = {"rows_inserted": {"users": 1}, "coverage_complete": True}
+    encoded = json.dumps(data, separators=(",", ":"), sort_keys=True).encode()
+
+    observation = RunnerObservationV1(
+        kind=ObservationKind.SEED_SUMMARY,
+        sha256=hashlib.sha256(encoded).hexdigest(),
+        data=data,
+    )
+
+    assert observation.scope == "observed_in_shadow"
+    with pytest.raises(ValidationError):
+        RunnerObservationV1(
+            kind=ObservationKind.SEED_SUMMARY,
+            sha256="0" * 64,
+            data=data,
         )

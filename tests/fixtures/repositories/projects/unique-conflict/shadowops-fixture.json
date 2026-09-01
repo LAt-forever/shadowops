@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "tables": [
+    {
+      "name": "users",
+      "rows": [
+        {"id": 1, "email": "duplicate@example.test"},
+        {"id": 2, "email": "duplicate@example.test"}
+      ]
+    }
+  ]
+}

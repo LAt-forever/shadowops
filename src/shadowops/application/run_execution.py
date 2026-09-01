@@ -194,4 +194,12 @@ class RunExecutionService:
             return "m4.baseline-upgrade.v1"
         if target is RunState.APPLYING:
             return "m4.apply-target.v1"
+        if target is RunState.SEEDING:
+            return "m5.seed-data.v1"
+        if target is RunState.SMOKE_TESTING:
+            return "m5.smoke-checks.v1"
+        if target is RunState.ROLLBACK_VERIFYING:
+            return "m5.rollback-roundtrip.v1"
+        if target is RunState.REPORTING:
+            return "m5.collect-evidence.v1"
         return "m1.noop.v1"

@@ -1,11 +1,14 @@
 """Celery tasks for reliable run execution."""
 
+from contextlib import suppress
 from typing import Any
 from uuid import UUID
 
 from shadowops.domain.errors import ClaimLostError, RepositoryInputError
+from shadowops.domain.runs import RunState
 from shadowops.worker.celery_app import celery_app
 from shadowops.worker.runtime import (
+    get_evidence_collector,
     get_execution_service,
     get_outbox_dispatcher,
     get_run_reconciler,
@@ -16,6 +19,15 @@ from shadowops.worker.runtime import (
 
 class RunCancellationRequested(Exception):
     """Internal control signal raised at cooperative stage checkpoints."""
+
+
+_DYNAMIC_EVIDENCE_STATES = {
+    RunState.APPLYING,
+    RunState.SEEDING,
+    RunState.SMOKE_TESTING,
+    RunState.ROLLBACK_VERIFYING,
+    RunState.REPORTING,
+}
 
 
 @celery_app.task(name="shadowops.maintenance.dispatch_outbox")  # type: ignore[untyped-decorator]
@@ -71,11 +83,17 @@ def process_run_event(self: Any, event_id: str) -> dict[str, str | int]:
             get_sandbox_manager().finalize_run(run.id)
         run = service.finalize(claim)
     except RunCancellationRequested:
+        if claim.to_state in _DYNAMIC_EVIDENCE_STATES:
+            with suppress(Exception):
+                get_evidence_collector().collect(claim.run_id)
         try:
             run = service.finalize(claim)
         except ClaimLostError:
             return {"status": "ignored", "event_id": event_id}
     except RepositoryInputError as error:
+        if claim.to_state in _DYNAMIC_EVIDENCE_STATES:
+            with suppress(Exception):
+                get_evidence_collector().collect(claim.run_id)
         try:
             run = service.fail(claim, error_code=error.code, error_detail=str(error))
         except ClaimLostError:

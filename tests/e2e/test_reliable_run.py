@@ -37,7 +37,7 @@ def _create(key: str, repository_path: str = "projects/m1-noop-demo") -> dict[st
     return response.json()
 
 
-def _wait_for_state(run_id: str, expected: str, *, timeout: float = 30.0) -> dict[str, object]:
+def _wait_for_state(run_id: str, expected: str, *, timeout: float = 60.0) -> dict[str, object]:
     deadline = time.monotonic() + timeout
     last: dict[str, object] | None = None
     while time.monotonic() < deadline:
@@ -339,7 +339,36 @@ def test_safe_changed_revision_produces_an_information_only_static_report() -> N
         _scalar(f"SELECT status FROM shadow_environments WHERE run_id = '{UUID(str(run['id']))}'")
         == "CLEANED"
     )
-    assert _count_rows("runner_executions", str(run["id"])) == 2
+    assert _count_rows("runner_executions", str(run["id"])) == 5
+    dynamic = _request("GET", f"/api/v1/runs/{run['id']}/dynamic-result").json()
+    rollback = next(
+        item
+        for item in dynamic["executions"]
+        if item["request"]["action"] == "VERIFY_ROLLBACK_ROUNDTRIP"
+    )
+    roundtrip = next(
+        item for item in rollback["result"]["observations"] if item["kind"] == "ROLLBACK_ROUNDTRIP"
+    )
+    assert roundtrip["data"]["restored"] is True
+    assert roundtrip["data"]["row_counts_before"] == {"users": 1}
+    assert roundtrip["data"]["row_counts_after"] == {"users": 1}
+    assert {item["kind"] for item in dynamic["evidence_items"]}.issuperset(
+        {"SEED_SUMMARY", "SCHEMA_FINGERPRINT", "SMOKE_SUMMARY", "ROLLBACK_ROUNDTRIP"}
+    )
+    assert all(
+        item["artifact_uri"] == f"artifact://sha256/{item['sha256']}"
+        for item in dynamic["evidence_items"]
+    )
+    first_evidence = dynamic["evidence_items"][0]
+    digest = str(first_evidence["sha256"])
+    stored = _compose(
+        "exec",
+        "-T",
+        "worker",
+        "sha256sum",
+        f"/var/lib/shadowops/artifacts/evidence/{digest[:2]}/{digest}",
+    )
+    assert stored.stdout.split()[0] == digest
     assert _shadow_resource_count(str(run["id"])) == 0
 
 
@@ -388,12 +417,78 @@ def test_cancel_during_target_apply_finalizes_every_shadow_resource() -> None:
     assert _shadow_resource_count(str(run["id"])) == 0
 
 
+def test_unique_fixture_conflict_is_structured_and_preserved_as_evidence() -> None:
+    run = _create(f"e2e-unique-conflict-{uuid4()}", "projects/unique-conflict")
+
+    failed = _wait_for_state(str(run["id"]), "FAILED", timeout=45.0)
+
+    assert failed["failure_code"] == "SEED_CONSTRAINT_FAILED"
+    dynamic = _request("GET", f"/api/v1/runs/{run['id']}/dynamic-result").json()
+    seed = next(
+        item for item in dynamic["executions"] if item["request"]["action"] == "LOAD_TEST_DATA"
+    )
+    assert seed["result"]["error_code"] == "SEED_CONSTRAINT_FAILED"
+    assert "RUNNER_STDERR" in {item["kind"] for item in dynamic["evidence_items"]}
+    assert _shadow_resource_count(str(run["id"])) == 0
+
+
+def test_irreversible_downgrade_returns_rollback_failure_evidence() -> None:
+    run = _create(f"e2e-irreversible-roundtrip-{uuid4()}", "projects/irreversible-roundtrip")
+
+    failed = _wait_for_state(str(run["id"]), "FAILED", timeout=45.0)
+
+    assert failed["failure_code"] == "ROLLBACK_FAILED"
+    dynamic = _request("GET", f"/api/v1/runs/{run['id']}/dynamic-result").json()
+    rollback = next(
+        item
+        for item in dynamic["executions"]
+        if item["request"]["action"] == "VERIFY_ROLLBACK_ROUNDTRIP"
+    )
+    assert rollback["result"]["error_code"] == "ROLLBACK_FAILED"
+    assert "RUNNER_STDERR" in {item["kind"] for item in dynamic["evidence_items"]}
+    assert _shadow_resource_count(str(run["id"])) == 0
+
+
+def test_type_conversion_failure_is_reported_by_target_upgrade() -> None:
+    run = _create(f"e2e-type-conversion-{uuid4()}", "projects/type-conversion-failure")
+
+    failed = _wait_for_state(str(run["id"]), "FAILED", timeout=45.0)
+
+    assert failed["failure_code"] == "MIGRATION_FAILED"
+    dynamic = _request("GET", f"/api/v1/runs/{run['id']}/dynamic-result").json()
+    target = next(
+        item for item in dynamic["executions"] if item["request"]["action"] == "APPLY_TARGET"
+    )
+    assert target["result"]["error_code"] == "MIGRATION_FAILED"
+    assert "RUNNER_STDERR" in {item["kind"] for item in dynamic["evidence_items"]}
+    assert _shadow_resource_count(str(run["id"])) == 0
+
+
+def test_unsupported_seed_type_remains_an_explicit_coverage_gap() -> None:
+    run = _create(f"e2e-unsupported-type-{uuid4()}", "projects/unsupported-type")
+
+    _wait_for_state(str(run["id"]), "COMPLETED", timeout=45.0)
+
+    dynamic = _request("GET", f"/api/v1/runs/{run['id']}/dynamic-result").json()
+    seed = next(
+        item for item in dynamic["executions"] if item["request"]["action"] == "LOAD_TEST_DATA"
+    )
+    assert any(
+        gap.startswith("unsupported_type:users.payload:") for gap in seed["result"]["coverage_gaps"]
+    )
+    coverage = [item for item in dynamic["evidence_items"] if item["kind"] == "COVERAGE_GAPS"]
+    assert coverage
+    assert coverage[0]["observation_scope"] == "unknown_in_production"
+    assert _shadow_resource_count(str(run["id"])) == 0
+
+
 def test_dangerous_changed_revision_produces_located_high_risk_findings() -> None:
     run = _create(f"e2e-dangerous-static-{uuid4()}", "projects/dangerous-drop")
 
-    _wait_for_state(str(run["id"]), "COMPLETED")
+    failed = _wait_for_state(str(run["id"]), "FAILED")
     response = _request("GET", f"/api/v1/runs/{run['id']}/static-report")
 
+    assert failed["failure_code"] == "ROLLBACK_FAILED"
     assert response.status_code == 200
     report = response.json()
     assert report["risk_level"] == "HIGH"
@@ -402,3 +497,4 @@ def test_dangerous_changed_revision_produces_located_high_risk_findings() -> Non
     assert by_rule["SOPS001"]["relative_path"].endswith("002_drop_legacy.py")
     assert by_rule["SOPS001"]["line"] == 10
     assert by_rule["SOPS001"]["evidence_ids"][0].startswith("evidence:")
+    assert _shadow_resource_count(str(run["id"])) == 0

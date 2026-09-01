@@ -77,7 +77,7 @@ def _view(run: AuditRun) -> AuditRunViewV1:
         id=run.id,
         state=run.state,
         version=run.version,
-        execution_profile="m4.postgres16-alembic.v1",
+        execution_profile="m5.dynamic-evidence.v1",
         failure_code=run.failure_code,
         cancel_requested_at=run.cancel_requested_at,
         created_at=run.created_at,
