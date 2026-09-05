@@ -8,6 +8,7 @@ from shadowops.agent.contracts import (
     ReadOnlyToolName,
     ToolObservationV1,
 )
+from shadowops.agent.llm import LLMProviderError
 from shadowops.agent.provider import AgentProvider, FakeAgentProvider
 from shadowops.agent.runtime import AgentPlanner
 
@@ -50,6 +51,16 @@ class RecordingRepairProvider:
         if len(self.requests) == 1:
             return ProviderResponseV1(text="{}")
         return self._fallback.invoke(request)
+
+
+class RateLimitedProvider:
+    provider_name = "openai"
+    model_name = "configured-model"
+
+    def invoke(self, request: PlannerRequestV1) -> ProviderResponseV1:
+        raise LLMProviderError(
+            "LLM_RATE_LIMITED", "Provider retry budget exhausted", retryable=True
+        )
 
 
 def _planner(provider: AgentProvider) -> AgentPlanner:
@@ -132,3 +143,12 @@ def test_revision_reads_and_provider_output_are_bounded() -> None:
     ).plan(RUN_ID)
     assert oversized.plan is None
     assert oversized.invocation.error_detail == "OUTPUT_TOO_LARGE"
+
+
+def test_provider_failure_is_returned_as_persistable_diagnostic() -> None:
+    result = _planner(RateLimitedProvider()).plan(RUN_ID)
+
+    assert result.plan is None
+    assert result.invocation.status == "FAILED"
+    assert result.invocation.error_code == "LLM_RATE_LIMITED"
+    assert result.invocation.error_detail == "Provider retry budget exhausted"

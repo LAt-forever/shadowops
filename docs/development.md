@@ -41,7 +41,7 @@ docker compose logs --no-color api worker
 
 若本机 `8000` 已占用，可设置 `SHADOWOPS_HTTP_PORT_HOST=58000` 启动，并在测试时设置 `SHADOWOPS_API_BASE=http://127.0.0.1:58000`。`SHADOWOPS_REPO_ROOT_HOST` 只控制宿主机只读挂载来源；容器内可信根固定为 `/repositories`。
 
-## M5 手工检查
+## M6 手工检查
 
 创建任务后，内嵌 Celery Beat 的 worker 会周期调用 outbox dispatcher 与 reconciler，无需手工触发任务：
 
@@ -52,7 +52,9 @@ curl -i -X POST http://127.0.0.1:8000/api/v1/runs \
   -d '{"repository_path":"projects/m1-noop-demo"}'
 ```
 
-将响应的 id 代入 `/api/v1/runs/<run-id>`、`/timeline`、`/static-report`、`/plan`、`/dynamic-result` 或 `/events`。M5 在 M4 upgrade 后继续执行 `SEEDING`、`SMOKE_TESTING`、`ROLLBACK_VERIFYING` 与 `REPORTING`：固定 seed、schema/row/constraint checks、`target → baseline → target` 往返，以及 content-addressed evidence collection。到达 `COMPLETED` 表示这些 shadow checks 已成功且动态资源已清理；它仍不代表生产数据分布、生产锁行为或真实 LLM 风险解释已被验证。
+将响应的 id 代入 `/api/v1/runs/<run-id>`、`/timeline`、`/static-report`、`/plan`、`/dynamic-result`、`/risk-report` 或 `/events`。M6 在 content-addressed evidence collection 后运行受限 Reporter，并由确定性 Policy Engine 计算不可被模型降低的最终风险。低/中风险到达 `COMPLETED`；成功但需要人工确认的高风险会停在 `AWAITING_APPROVAL`。M7 前没有 approve/reject API。
+
+Compose 和 CI 默认使用 `SHADOWOPS_AGENT_MODE=fake`。离线重放使用 `recorded` 与 `SHADOWOPS_LLM_RECORDED_RESPONSES_JSON`；真实调用使用 `live`，并只在 worker 环境设置 `SHADOWOPS_LLM_MODEL` 和 `SHADOWOPS_OPENAI_API_KEY`。模型名没有代码默认值，普通 PR 验证不调用真实 API。所有模式都受相同 schema、citation、重试预算和 Policy Engine 约束。
 
 Worker 是唯一挂载 Docker socket 的受信任基础设施组件，等价于本机 Docker daemon 权限；Agent、Runner、API 与 migration 都不能访问该 socket。此信任模型只面向可信开发机上的本地单用户 Demo，不是敌对多租户沙箱。
 

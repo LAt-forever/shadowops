@@ -233,9 +233,10 @@ def test_run_completes_idempotently_and_survives_api_restart() -> None:
         "collect_evidence",
         "cleanup_shadow_environment",
     ]
-    assert _count_rows("agent_invocations", str(first["id"])) == 1
-    assert _count_rows("agent_tool_calls", str(first["id"])) == 4
+    assert _count_rows("agent_invocations", str(first["id"])) == 2
+    assert _count_rows("agent_tool_calls", str(first["id"])) == 9
     assert _count_rows("audit_plans", str(first["id"])) == 1
+    assert _count_rows("risk_reports", str(first["id"])) == 1
 
     timeline = _request("GET", f"/api/v1/runs/{first['id']}/timeline")
     assert timeline.status_code == 200
@@ -283,7 +284,7 @@ def test_queued_run_and_duplicate_messages_recover_after_worker_restart() -> Non
     timeline = _request("GET", f"/api/v1/runs/{run['id']}/timeline").json()
     assert len(timeline["events"]) == 12
     assert _request("GET", f"/api/v1/runs/{run['id']}/plan").status_code == 200
-    assert _count_rows("agent_invocations", str(run["id"])) == 1
+    assert _count_rows("agent_invocations", str(run["id"])) == 2
     assert _count_rows("audit_plans", str(run["id"])) == 1
 
 
@@ -369,6 +370,12 @@ def test_safe_changed_revision_produces_an_information_only_static_report() -> N
         f"/var/lib/shadowops/artifacts/evidence/{digest[:2]}/{digest}",
     )
     assert stored.stdout.split()[0] == digest
+    risk = _request("GET", f"/api/v1/runs/{run['id']}/risk-report")
+    assert risk.status_code == 200
+    assert risk.json()["final_risk"] == "MEDIUM"
+    assert risk.json()["requires_approval"] is False
+    assert risk.json()["generated_by"] == "fake"
+    assert risk.json()["report_hash"]
     assert _shadow_resource_count(str(run["id"])) == 0
 
 
@@ -446,6 +453,10 @@ def test_irreversible_downgrade_returns_rollback_failure_evidence() -> None:
     )
     assert rollback["result"]["error_code"] == "ROLLBACK_FAILED"
     assert "RUNNER_STDERR" in {item["kind"] for item in dynamic["evidence_items"]}
+    risk = _request("GET", f"/api/v1/runs/{run['id']}/risk-report").json()
+    assert risk["final_risk"] == "HIGH"
+    assert risk["requires_approval"] is True
+    assert "dynamic_failure:ROLLBACK_FAILED" in risk["policy_reasons"]
     assert _shadow_resource_count(str(run["id"])) == 0
 
 
@@ -479,6 +490,9 @@ def test_unsupported_seed_type_remains_an_explicit_coverage_gap() -> None:
     coverage = [item for item in dynamic["evidence_items"] if item["kind"] == "COVERAGE_GAPS"]
     assert coverage
     assert coverage[0]["observation_scope"] == "unknown_in_production"
+    risk = _request("GET", f"/api/v1/runs/{run['id']}/risk-report").json()
+    assert risk["final_risk"] == "MEDIUM"
+    assert "shadow_coverage_gaps_present" in risk["policy_reasons"]
     assert _shadow_resource_count(str(run["id"])) == 0
 
 
@@ -497,4 +511,8 @@ def test_dangerous_changed_revision_produces_located_high_risk_findings() -> Non
     assert by_rule["SOPS001"]["relative_path"].endswith("002_drop_legacy.py")
     assert by_rule["SOPS001"]["line"] == 10
     assert by_rule["SOPS001"]["evidence_ids"][0].startswith("evidence:")
+    risk = _request("GET", f"/api/v1/runs/{run['id']}/risk-report").json()
+    assert risk["final_risk"] == "HIGH"
+    assert risk["requires_approval"] is True
+    assert "static_risk:HIGH" in risk["policy_reasons"]
     assert _shadow_resource_count(str(run["id"])) == 0

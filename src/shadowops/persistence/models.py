@@ -190,6 +190,10 @@ class AgentInvocationModel(Base):
     repair_attempts: Mapped[int] = mapped_column(Integer)
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_detail: Mapped[str | None] = mapped_column(Text)
+    provider_response_id: Mapped[str | None] = mapped_column(String(128))
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -306,4 +310,23 @@ class EvidenceItemModel(Base):
     byte_count: Mapped[int] = mapped_column(Integer)
     media_type: Mapped[str] = mapped_column(String(64))
     redaction_status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RiskReportModel(Base):
+    __tablename__ = "risk_reports"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("audit_runs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    invocation_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("agent_invocations.id", ondelete="CASCADE"), nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(String(16))
+    input_hash: Mapped[str] = mapped_column(String(64))
+    report_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    final_risk: Mapped[str] = mapped_column(String(16))
+    requires_approval: Mapped[bool] = mapped_column(Boolean)
+    report: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

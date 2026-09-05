@@ -89,7 +89,15 @@ services:
       - --beat
       - --schedule=/tmp/shadowops-celerybeat-schedule
       - --loglevel=INFO
-    environment: *shadowops-environment
+    environment:
+      <<: *shadowops-environment
+      SHADOWOPS_AGENT_MODE: ${SHADOWOPS_AGENT_MODE:-fake}
+      SHADOWOPS_LLM_MODEL: ${SHADOWOPS_LLM_MODEL:-}
+      SHADOWOPS_OPENAI_API_KEY: ${SHADOWOPS_OPENAI_API_KEY:-}
+      SHADOWOPS_OPENAI_BASE_URL: ${SHADOWOPS_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      SHADOWOPS_LLM_TIMEOUT_SECONDS: ${SHADOWOPS_LLM_TIMEOUT_SECONDS:-30.0}
+      SHADOWOPS_LLM_MAX_ATTEMPTS: ${SHADOWOPS_LLM_MAX_ATTEMPTS:-2}
+      SHADOWOPS_LLM_RECORDED_RESPONSES_JSON: ${SHADOWOPS_LLM_RECORDED_RESPONSES_JSON:-}
     volumes:
       - ${SHADOWOPS_REPO_ROOT_HOST:-./tests/fixtures/repositories}:/repositories:ro
       - shadowops-artifacts:/var/lib/shadowops/artifacts

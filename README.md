@@ -1,12 +1,12 @@
 # ShadowOps
 
-ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M5 动态证据闭环**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 revision graph，由受约束 Fake Agent 生成能力计划，再由确定性 orchestrator 在隔离 PostgreSQL 16 环境中执行 upgrade、seed、smoke checks 与 rollback roundtrip。真实 LLM 仍在后续里程碑。
+ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Docker 影子环境平台。目前处于 **pre-MVP / M6 证据化风险报告**：控制面能可靠创建任务，把允许目录中的本地 Git 仓库转成不可变快照和 revision graph，由受约束 Agent 生成能力计划，再由确定性 orchestrator 在隔离 PostgreSQL 16 环境中执行 upgrade、seed、smoke checks 与 rollback roundtrip，最终生成带 evidence citation 的版本化风险报告。
 
 ## 当前已实现
 
 - Python 3.12 `src` 工程、锁定依赖与结构化 JSON 日志。
 - FastAPI health API，以及创建、查询、取消 audit run 的版本化 API。
-- PostgreSQL 持久化的 `audit_runs`、`run_steps`、`outbox_events`、`repo_snapshots`、`revision_graphs`、`static_reports`、`agent_invocations`、`agent_tool_calls`、`audit_plans` 与乐观版本控制。
+- PostgreSQL 持久化的 `audit_runs`、`run_steps`、`outbox_events`、`repo_snapshots`、`revision_graphs`、`static_reports`、`agent_invocations`、`agent_tool_calls`、`audit_plans`、`risk_reports` 与乐观版本控制。
 - Transactional outbox、Celery 幂等消费、step claim/heartbeat/fencing 与 reconciler 恢复。
 - 显式状态转换：安全发现、静态分析、Agent 规划、影子环境 provisioning/upgrade、seed、smoke、rollback verification 与 evidence collection 各自由固定 handler 驱动；非法跳转被拒绝。
 - 单一 allowed root、相对路径校验、symlink/特殊文件/硬链接拒绝、文件与总量预算，以及默认凭据文件排除。
@@ -31,6 +31,11 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 - rollback roundtrip 固定执行 `target → baseline → target`，比较 revision、schema fingerprint 与 row-count fingerprint；downgrade 异常或恢复不一致以稳定 `ROLLBACK_FAILED` 终止。
 - Runner observation 与已脱敏 stdout/stderr 写入本地 content-addressed artifact store；临时文件 `fsync` 后原子 rename，控制库仅保存 URI、hash、大小、scope 与 redaction metadata。
 - evidence 明确区分 `observed_in_shadow` 与 `unknown_in_production`；shadow seed 成功不代表生产数据分布、锁行为或兼容性已被覆盖。
+- Provider-neutral `LLMProvider` 边界支持确定性 Fake、离线 Recorded replay 与 OpenAI Responses API live adapter；模型名和 API key 只来自 worker 配置，Runner 与 API 不接收 LLM 密钥。
+- Planner 与 Reporter 使用独立的严格 JSON Schema prompt；Reporter 只能读取固定的静态报告、计划、step result、evidence 与 schema diff 视图，事实条目必须引用已存在的 evidence id，并只允许一次 citation/schema repair。
+- `RiskReportV1` 持久化 canonical report hash、模型草稿、最终风险、policy reasons、provider/model、token、latency 与稳定错误码；超时、限流或畸形输出在预算耗尽后降级为可诊断的确定性报告。
+- Policy Engine 以静态严重度、动态失败、mandatory evidence 缺口和 coverage gap 计算不可降低的风险下限；模型只能提高风险。高风险报告标记 `requires_approval`，成功 run 会停在 `AWAITING_APPROVAL`，审批接口留给 M7。
+- `GET /api/v1/runs/{id}/risk-report` 返回证据引用、未知项、建议、provider metadata 与 policy decision；未生成时返回稳定的 `RISK_REPORT_NOT_READY`。
 - HTTP idempotency key、重复 broker 消息幂等、协作式取消。
 - 可查询 timeline 与支持 `Last-Event-ID` 恢复的 SSE 状态流。
 - Redis 仅作 broker，权威任务状态保存在 PostgreSQL；worker 非 root 运行。
@@ -41,7 +46,7 @@ ShadowOps 是面向 PostgreSQL/Alembic Migration 的 AI Agent 安全审计与 Do
 
 当前**没有 Web 可视化界面**。现阶段可见产物是 REST JSON 静态报告、SSE 时间线、结构化日志和 PostgreSQL 持久状态；任务列表、详情页、findings 与证据报告 UI 计划在 M7 实现。
 
-当前 Agent 是可复现的 Fake Provider，只负责生成并校验计划。M5 的全部执行参数仍由确定性 orchestrator 与固定 Runner 选择；Agent 不能提交 SQL、shell、镜像、网络、凭据或宿主路径。真实 LLM、风险报告与 Policy Engine 在 M6，本地 Web UI 和人工审批在 M7。
+默认 Agent 模式仍是可复现的 Fake Provider，CI 不需要真实 API key；也可显式选择 Recorded 或 OpenAI live 模式。无论 provider 如何，全部执行参数仍由确定性 orchestrator 与固定 Runner 选择；Agent 不能提交 SQL、shell、镜像、网络、凭据、宿主路径或审批决定。本地 Web UI 和人工审批在 M7。
 
 ## 本地启动
 
@@ -61,7 +66,7 @@ uv run shadowops ping --api-url http://127.0.0.1:8000
 docker compose down --volumes
 ```
 
-## M5 API 示例
+## M6 API 示例
 
 创建 run；相同 `Idempotency-Key` 与相同请求会返回同一个 run：
 
@@ -80,6 +85,7 @@ curl http://127.0.0.1:8000/api/v1/runs/<run-id>/timeline
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/static-report
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/plan
 curl http://127.0.0.1:8000/api/v1/runs/<run-id>/dynamic-result
+curl http://127.0.0.1:8000/api/v1/runs/<run-id>/risk-report
 curl -N -H 'Last-Event-ID: 0' http://127.0.0.1:8000/api/v1/runs/<run-id>/events
 ```
 
@@ -110,3 +116,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/runs/<run-id>/cancel \
 - [M3 验证交接](./docs/handoffs/M3.md)
 - [M4 验证交接](./docs/handoffs/M4.md)
 - [M5 验证交接](./docs/handoffs/M5.md)
+- [M6 验证交接](./docs/handoffs/M6.md)

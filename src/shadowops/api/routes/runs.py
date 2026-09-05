@@ -13,6 +13,7 @@ from shadowops.api.schemas.runs import (
 )
 from shadowops.application.dynamic_results import DynamicAuditQueryService
 from shadowops.application.planning import AuditPlanQueryService
+from shadowops.application.reporting import RiskReportQueryService
 from shadowops.application.runs import RunService
 from shadowops.application.static_analysis import StaticReportQueryService
 from shadowops.domain.errors import (
@@ -20,11 +21,13 @@ from shadowops.domain.errors import (
     DynamicAuditNotReadyError,
     IdempotencyConflictError,
     OptimisticConcurrencyError,
+    RiskReportNotReadyError,
     RunNotFoundError,
     StaticReportNotReadyError,
     TerminalRunError,
 )
 from shadowops.domain.runs import AuditRun
+from shadowops.reporting.contracts import RiskReportV1
 from shadowops.rules.contracts import StaticReportV1
 from shadowops.sandbox.contracts import DynamicAuditViewV1
 
@@ -71,13 +74,23 @@ def _dynamic_service(request: Request) -> DynamicAuditQueryService:
     return service
 
 
+def _risk_report_service(request: Request) -> RiskReportQueryService:
+    service: RiskReportQueryService | None = request.app.state.risk_report_service
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "RISK_REPORT_SERVICE_UNAVAILABLE"},
+        )
+    return service
+
+
 def _view(run: AuditRun) -> AuditRunViewV1:
     base = f"/api/v1/runs/{run.id}"
     return AuditRunViewV1(
         id=run.id,
         state=run.state,
         version=run.version,
-        execution_profile="m5.dynamic-evidence.v1",
+        execution_profile="m6.evidence-risk-report.v1",
         failure_code=run.failure_code,
         cancel_requested_at=run.cancel_requested_at,
         created_at=run.created_at,
@@ -90,6 +103,7 @@ def _view(run: AuditRun) -> AuditRunViewV1:
             "static_report": f"{base}/static-report",
             "plan": f"{base}/plan",
             "dynamic_result": f"{base}/dynamic-result",
+            "risk_report": f"{base}/risk-report",
         },
     )
 
@@ -159,6 +173,20 @@ def get_dynamic_result(run_id: UUID, request: Request) -> DynamicAuditViewV1:
             status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
         ) from error
     except DynamicAuditNotReadyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
+        ) from error
+
+
+@router.get("/{run_id}/risk-report", response_model=RiskReportV1)
+def get_risk_report(run_id: UUID, request: Request) -> RiskReportV1:
+    try:
+        return _risk_report_service(request).get(run_id)
+    except RunNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail={"code": error.code}
+        ) from error
+    except RiskReportNotReadyError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail={"code": error.code}
         ) from error

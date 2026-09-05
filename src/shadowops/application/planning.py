@@ -31,7 +31,10 @@ class PlanningStageHandler:
             uow.agent_planning.save_result(result)
             uow.commit()
         if result.plan is None:
-            raise RepositoryInputError("PLAN_INVALID", "Agent plan failed validation after repair")
+            raise RepositoryInputError(
+                result.invocation.error_code or "PLAN_INVALID",
+                result.invocation.error_detail or "Agent plan failed within its retry budget",
+            )
 
 
 class AuditPlanQueryService:

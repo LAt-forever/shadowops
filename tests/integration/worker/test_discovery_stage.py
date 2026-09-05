@@ -1,6 +1,6 @@
 import os
 import subprocess
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -72,7 +72,8 @@ def _services(engine: Engine, root: Path, artifacts: Path):
             return uow.snapshots.get(snapshot_id)
 
     return (
-        RunService(factory),
+        # Keep the Compose outbox dispatcher from racing this direct-execution test.
+        RunService(factory, clock=lambda: datetime(2099, 1, 1, tzinfo=UTC)),
         RunExecutionService(factory, lease_duration=timedelta(seconds=10)),
         DiscoveryStageHandler(
             factory,

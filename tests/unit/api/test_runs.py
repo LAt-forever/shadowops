@@ -14,11 +14,13 @@ from shadowops.application.readiness import ReadinessService
 from shadowops.domain.errors import (
     AuditPlanNotReadyError,
     IdempotencyConflictError,
+    RiskReportNotReadyError,
     RunNotFoundError,
     StaticReportNotReadyError,
     TerminalRunError,
 )
 from shadowops.domain.runs import AuditRun, RunState
+from shadowops.reporting.contracts import ReporterDraftV1, RiskReportV1, risk_report_hash
 from shadowops.rules.contracts import RevisionGraphSummaryV1, StaticReportV1
 
 RUN_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -102,6 +104,43 @@ class StubPlanService:
         )
 
 
+class StubRiskReportService:
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+
+    def get(self, *args: object, **kwargs: object) -> RiskReportV1:
+        if self._error is not None:
+            raise self._error
+        values = {
+            "schema_version": "1.0",
+            "id": str(UUID("66666666-6666-4666-8666-666666666666")),
+            "run_id": str(RUN_ID),
+            "invocation_id": str(UUID("77777777-7777-4777-8777-777777777777")),
+            "input_hash": "d" * 64,
+            "final_risk": "MEDIUM",
+            "requires_approval": False,
+            "policy_reasons": ["static_risk:INFO", "shadow_coverage_gaps_present"],
+            "provider_metadata": {
+                "provider": "fake",
+                "model": "shadowops-reference-reporter-v1",
+                "status": "SUCCEEDED",
+                "response_id": None,
+                "input_tokens": None,
+                "output_tokens": None,
+                "latency_ms": 0,
+                "error_code": None,
+            },
+            "draft": ReporterDraftV1(summary="Grounded report", assessed_risk="MEDIUM").model_dump(
+                mode="json"
+            ),
+            "evidence_ids": [],
+            "generated_by": "fake",
+            "created_at": NOW.isoformat(),
+        }
+        values["report_hash"] = risk_report_hash(values)
+        return RiskReportV1.model_validate(values)
+
+
 def _run() -> AuditRun:
     return AuditRun(
         id=RUN_ID,
@@ -119,6 +158,7 @@ def _client(
     service: StubRunService,
     report_service: StubStaticReportService | None = None,
     plan_service: StubPlanService | None = None,
+    risk_report_service: StubRiskReportService | None = None,
 ) -> TestClient:
     return TestClient(
         create_app(
@@ -126,6 +166,7 @@ def _client(
             run_service=service,
             static_report_service=report_service or StubStaticReportService(),
             plan_service=plan_service or StubPlanService(),
+            risk_report_service=risk_report_service or StubRiskReportService(),
         )
     )
 
@@ -156,6 +197,7 @@ def test_create_run_returns_accepted_resource_and_location() -> None:
         "static_report": f"/api/v1/runs/{RUN_ID}/static-report",
         "plan": f"/api/v1/runs/{RUN_ID}/plan",
         "dynamic_result": f"/api/v1/runs/{RUN_ID}/dynamic-result",
+        "risk_report": f"/api/v1/runs/{RUN_ID}/risk-report",
     }
 
 
@@ -219,6 +261,24 @@ def test_get_plan_maps_not_ready_to_stable_conflict() -> None:
 
     assert response.status_code == 409
     assert response.json()["detail"] == {"code": "AUDIT_PLAN_NOT_READY"}
+
+
+def test_get_risk_report_returns_policy_bounded_report() -> None:
+    response = _client(StubRunService()).get(f"/api/v1/runs/{RUN_ID}/risk-report")
+
+    assert response.status_code == 200
+    assert response.json()["final_risk"] == "MEDIUM"
+    assert response.json()["generated_by"] == "fake"
+
+
+def test_get_risk_report_maps_not_ready_to_stable_conflict() -> None:
+    response = _client(
+        StubRunService(),
+        risk_report_service=StubRiskReportService(RiskReportNotReadyError(RUN_ID)),
+    ).get(f"/api/v1/runs/{RUN_ID}/risk-report")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "RISK_REPORT_NOT_READY"}
 
 
 def test_cancel_run_records_a_cooperative_request() -> None:

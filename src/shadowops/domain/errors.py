@@ -92,6 +92,13 @@ class DynamicAuditNotReadyError(DomainError):
         super().__init__(f"Dynamic audit for run {run_id} is not ready")
 
 
+class RiskReportNotReadyError(DomainError):
+    code = "RISK_REPORT_NOT_READY"
+
+    def __init__(self, run_id: Any) -> None:
+        super().__init__(f"Risk report for run {run_id} is not ready")
+
+
 class ClaimLostError(DomainError):
     """Raised when an expired worker attempts to mutate a reclaimed step."""
 

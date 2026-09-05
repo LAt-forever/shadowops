@@ -2,7 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +51,13 @@ class Settings(BaseSettings):
     sandbox_readiness_timeout_seconds: int = 30
     sandbox_execution_timeout_seconds: int = 210
     sandbox_sweep_interval_seconds: float = 30.0
+    agent_mode: Literal["fake", "recorded", "live"] = "fake"
+    llm_model: str | None = None
+    llm_recorded_responses_json: str | None = None
+    openai_api_key: SecretStr | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    llm_timeout_seconds: float = 30.0
+    llm_max_attempts: int = 2
 
 
 @lru_cache
