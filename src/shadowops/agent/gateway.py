@@ -66,9 +66,12 @@ class ReadOnlyToolGateway:
                 tool_version="1.0",
                 data={
                     "run_id": str(request.run_id),
-                    "profile": "none",
-                    "available": False,
-                    "coverage_gap": "M3 has no fixture manifest or synthetic data generator.",
+                    "profile": "fixture_manifest_or_bounded_synthetic",
+                    "available": True,
+                    "coverage_gap": (
+                        "Exact unsupported types and production-data unknowns are determined "
+                        "by the fixed Runner."
+                    ),
                 },
             )
         raise RepositoryInputError("TOOL_NOT_ALLOWED", "Tool is not allowlisted")

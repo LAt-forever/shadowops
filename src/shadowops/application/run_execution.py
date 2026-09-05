@@ -120,6 +120,10 @@ class RunExecutionService:
             final_state = (
                 RunState.CANCELLED if run.cancel_requested_at is not None else claim.to_state
             )
+            if final_state is RunState.COMPLETED:
+                report = uow.risk_reports.get_for_run(run.id)
+                if report is not None and report.requires_approval:
+                    final_state = RunState.AWAITING_APPROVAL
             resulting_version = run.version + 1
             if not uow.steps.complete(
                 claim.id,
@@ -133,7 +137,7 @@ class RunExecutionService:
             expected_version = run.version
             run.transition(final_state, now=now)
             uow.runs.save(run, expected_version=expected_version)
-            if run.state not in TERMINAL_STATES:
+            if run.state not in TERMINAL_STATES and next_main_state(run.state) is not None:
                 uow.outbox.add(self._next_event(run, now))
             uow.commit()
             return run
@@ -202,4 +206,6 @@ class RunExecutionService:
             return "m5.rollback-roundtrip.v1"
         if target is RunState.REPORTING:
             return "m5.collect-evidence.v1"
+        if target is RunState.COMPLETED:
+            return "m6.risk-reporting.v1"
         return "m1.noop.v1"

@@ -1,5 +1,6 @@
 """Worker process runtime dependencies."""
 
+import json
 from datetime import timedelta
 from functools import lru_cache
 from uuid import UUID
@@ -7,7 +8,14 @@ from uuid import UUID
 from sqlalchemy.orm import Session, sessionmaker
 
 from shadowops.agent.gateway import ReadOnlyToolGateway
-from shadowops.agent.provider import FakeAgentProvider
+from shadowops.agent.llm import (
+    FakeLLMProvider,
+    LLMProvider,
+    OpenAIResponsesProvider,
+    PlannerLLMAdapter,
+    RecordedLLMProvider,
+)
+from shadowops.agent.provider import AgentProvider, FakeAgentProvider
 from shadowops.agent.runtime import AgentPlanner
 from shadowops.application.discovery import DiscoveryStageHandler, NoOpStageHandler, StageHandler
 from shadowops.application.dynamic_audit import (
@@ -20,6 +28,7 @@ from shadowops.application.dynamic_audit import (
     SmokeChecksStageHandler,
 )
 from shadowops.application.planning import PlanningStageHandler
+from shadowops.application.reporting import RiskReportingStageHandler
 from shadowops.application.run_execution import RunExecutionService
 from shadowops.application.static_analysis import StaticAnalysisStageHandler
 from shadowops.config import get_settings
@@ -28,6 +37,8 @@ from shadowops.evidence.collector import DynamicEvidenceCollector
 from shadowops.evidence.store import LocalArtifactStore
 from shadowops.persistence.database import create_control_engine, create_session_factory
 from shadowops.persistence.uow import SqlAlchemyUnitOfWork
+from shadowops.reporting.gateway import ReportingEvidenceGateway
+from shadowops.reporting.runtime import RiskReporter
 from shadowops.repository.alembic import AlembicDiscoveryService
 from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
 from shadowops.repository.snapshot import SnapshotReader, SnapshotService
@@ -90,7 +101,7 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
     planning = PlanningStageHandler(
         uow_factory,
         AgentPlanner(
-            FakeAgentProvider(),
+            get_planner_provider(),
             ReadOnlyToolGateway(
                 uow_factory,
                 SnapshotReader(settings.artifact_root, snapshot_lookup),
@@ -105,6 +116,7 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
     smoke = SmokeChecksStageHandler(uow_factory, sandbox)
     rollback = RollbackRoundtripStageHandler(uow_factory, sandbox)
     reporting = CollectEvidenceStageHandler(get_evidence_collector(), sandbox)
+    risk_reporting = get_risk_reporting_handler()
     noop = NoOpStageHandler()
     return {
         state: (
@@ -128,6 +140,8 @@ def get_stage_handlers() -> dict[RunState, StageHandler]:
             if state is RunState.ROLLBACK_VERIFYING
             else reporting
             if state is RunState.REPORTING
+            else risk_reporting
+            if state is RunState.COMPLETED
             else noop
         )
         for state in RunState
@@ -156,6 +170,51 @@ def get_evidence_collector() -> DynamicEvidenceCollector:
     return DynamicEvidenceCollector(
         lambda: SqlAlchemyUnitOfWork(sessions), LocalArtifactStore(settings.artifact_root)
     )
+
+
+@lru_cache
+def get_llm_provider() -> LLMProvider:
+    settings = get_settings()
+    if settings.agent_mode == "fake":
+        return FakeLLMProvider()
+    if settings.agent_mode == "recorded":
+        if not settings.llm_model or not settings.llm_recorded_responses_json:
+            raise RuntimeError("Recorded mode requires model and recorded responses JSON")
+        payload = json.loads(settings.llm_recorded_responses_json)
+        if not isinstance(payload, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in payload.items()
+        ):
+            raise RuntimeError("Recorded responses must be a JSON string map")
+        return RecordedLLMProvider(settings.llm_model, payload)
+    if settings.openai_api_key is None or not settings.llm_model:
+        raise RuntimeError("Live mode requires SHADOWOPS_OPENAI_API_KEY and SHADOWOPS_LLM_MODEL")
+    return OpenAIResponsesProvider(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.llm_model,
+        base_url=settings.openai_base_url,
+        timeout_seconds=settings.llm_timeout_seconds,
+        max_attempts=settings.llm_max_attempts,
+    )
+
+
+@lru_cache
+def get_planner_provider() -> AgentProvider:
+    if get_settings().agent_mode == "fake":
+        return FakeAgentProvider()
+    return PlannerLLMAdapter(get_llm_provider())
+
+
+@lru_cache
+def get_risk_reporting_handler() -> RiskReportingStageHandler:
+    settings = get_settings()
+    sessions = get_worker_session_factory()
+
+    def uow_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(sessions)
+
+    store = LocalArtifactStore(settings.artifact_root)
+    reporter = RiskReporter(get_llm_provider(), ReportingEvidenceGateway(uow_factory, store))
+    return RiskReportingStageHandler(uow_factory, reporter)
 
 
 @lru_cache

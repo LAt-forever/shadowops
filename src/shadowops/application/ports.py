@@ -8,6 +8,7 @@ from uuid import UUID
 from shadowops.agent.contracts import AuditPlanRecordV1, PlanningResultV1
 from shadowops.domain.runs import AuditRun, OutboxEvent, RunState, RunStep
 from shadowops.evidence.contracts import EvidenceItemV1
+from shadowops.reporting.contracts import ReportingResultV1, RiskReportV1
 from shadowops.repository.contracts import RepoSnapshotV1, RevisionGraphV1
 from shadowops.rules.contracts import StaticReportV1
 from shadowops.sandbox.contracts import (
@@ -149,6 +150,12 @@ class EvidenceRepository(Protocol):
     def list_for_run(self, run_id: UUID) -> list[EvidenceItemV1]: ...
 
 
+class RiskReportRepository(Protocol):
+    def get_for_run(self, run_id: UUID) -> RiskReportV1 | None: ...
+
+    def save_result(self, result: ReportingResultV1) -> RiskReportV1: ...
+
+
 class UnitOfWork(Protocol):
     @property
     def runs(self) -> RunRepository: ...
@@ -176,6 +183,9 @@ class UnitOfWork(Protocol):
 
     @property
     def evidence(self) -> EvidenceRepository: ...
+
+    @property
+    def risk_reports(self) -> RiskReportRepository: ...
 
     def __enter__(self) -> Self: ...
 

@@ -215,7 +215,7 @@ CLI 提供 `shadowops audit PATH [--base REF --head REF]`、`shadowops status RU
 
 API 只读挂载显式配置的 `SHADOWOPS_REPO_ROOT`，用户提交的是该根目录内的相对路径；Snapshot Service 是唯一读取此挂载的模块。Worker 作为受信任的基础设施组件访问宿主 Docker socket 以创建短期容器，因此本地 Worker 等价于拥有 Docker daemon 权限；Agent、Runner、用户 Migration 和 Web 请求均不能直接触达 socket。远程/多租户部署必须改用独立 sandbox service，不能照搬此信任模型。
 
-开发时 API 也可在宿主通过 `uv run` 启动，但正式 Demo 以 Compose 为准。Docker 守护进程是本地基础设施依赖；当前环境检测到 Docker CLI，但 daemon 未运行，进入实现/集成测试前需启动 Docker Desktop。当前系统 Python 3.9.6 不作为项目运行时，使用 `uv` 安装并锁定 Python 3.12。
+开发时 API 也可在宿主通过 `uv run` 启动，但正式 Demo 以 Compose 为准。Docker 守护进程是本地基础设施依赖，运行集成/E2E 前必须可用；项目通过 `uv` 安装并锁定 Python 3.12，不依赖宿主系统 Python 版本。
 
 ## 13. 关键架构决策与延后项
 

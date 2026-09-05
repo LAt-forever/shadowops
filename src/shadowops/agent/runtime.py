@@ -16,11 +16,13 @@ from shadowops.agent.contracts import (
     AuditPlanV1,
     PlannerRequestV1,
     PlanningResultV1,
+    ProviderResponseV1,
     ReadOnlyToolName,
     ToolCallV1,
     ToolObservationV1,
 )
 from shadowops.agent.gateway import ReadOnlyToolGateway
+from shadowops.agent.llm import LLMProviderError
 from shadowops.agent.provider import AgentProvider
 from shadowops.agent.validator import PlanValidationError, PlanValidator
 
@@ -80,7 +82,21 @@ class AgentPlanner:
                 prior_output_hash=prior_output_hash,
                 prior_output=prior_output,
             )
-            response = self._provider.invoke(request)
+            try:
+                response = self._provider.invoke(request)
+            except LLMProviderError as error:
+                invocation = self._invocation(
+                    invocation_id,
+                    run_id,
+                    input_hash,
+                    None,
+                    "FAILED",
+                    attempt,
+                    started_at,
+                    error_code=error.code,
+                    error_detail=error.detail,
+                )
+                return PlanningResultV1(invocation=invocation, tool_calls=tool_calls)
             final_output_hash = hashlib.sha256(response.text.encode()).hexdigest()
             try:
                 if len(response.text.encode()) > self._max_provider_output_bytes:
@@ -104,6 +120,7 @@ class AgentPlanner:
                     started_at,
                     error_code="PLAN_INVALID",
                     error_detail=";".join(errors),
+                    response=response,
                 )
                 return PlanningResultV1(invocation=invocation, tool_calls=tool_calls)
             invocation = self._invocation(
@@ -114,6 +131,7 @@ class AgentPlanner:
                 "SUCCEEDED",
                 attempt,
                 started_at,
+                response=response,
             )
             record = AuditPlanRecordV1(
                 id=uuid5(NAMESPACE_URL, f"shadowops:{run_id}:plan:{input_hash}"),
@@ -186,6 +204,7 @@ class AgentPlanner:
         *,
         error_code: str | None = None,
         error_detail: str | None = None,
+        response: ProviderResponseV1 | None = None,
     ) -> AgentInvocationV1:
         return AgentInvocationV1(
             id=invocation_id,
@@ -200,6 +219,10 @@ class AgentPlanner:
             repair_attempts=repairs,
             error_code=error_code,
             error_detail=error_detail,
+            provider_response_id=None if response is None else response.response_id,
+            input_tokens=None if response is None else response.input_tokens,
+            output_tokens=None if response is None else response.output_tokens,
+            latency_ms=0 if response is None else response.latency_ms,
             started_at=started_at,
             completed_at=self._clock(),
         )

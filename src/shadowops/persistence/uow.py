@@ -10,6 +10,7 @@ from shadowops.persistence.repositories import (
     SqlAlchemyOutboxRepository,
     SqlAlchemyRepoSnapshotRepository,
     SqlAlchemyRevisionGraphRepository,
+    SqlAlchemyRiskReportRepository,
     SqlAlchemyRunRepository,
     SqlAlchemyRunStepRepository,
     SqlAlchemySandboxRepository,
@@ -34,6 +35,7 @@ class SqlAlchemyUnitOfWork:
         self.agent_planning = SqlAlchemyAgentPlanningRepository(self.session)
         self.sandbox = SqlAlchemySandboxRepository(self.session)
         self.evidence = SqlAlchemyEvidenceRepository(self.session)
+        self.risk_reports = SqlAlchemyRiskReportRepository(self.session)
         self._committed = False
         return self
 

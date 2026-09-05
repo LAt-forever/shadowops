@@ -11,6 +11,7 @@ from shadowops.worker.runtime import (
     get_evidence_collector,
     get_execution_service,
     get_outbox_dispatcher,
+    get_risk_reporting_handler,
     get_run_reconciler,
     get_sandbox_manager,
     get_stage_handlers,
@@ -94,6 +95,8 @@ def process_run_event(self: Any, event_id: str) -> dict[str, str | int]:
         if claim.to_state in _DYNAMIC_EVIDENCE_STATES:
             with suppress(Exception):
                 get_evidence_collector().collect(claim.run_id)
+            with suppress(Exception):
+                get_risk_reporting_handler().execute(run, checkpoint=lambda: None)
         try:
             run = service.fail(claim, error_code=error.code, error_detail=str(error))
         except ClaimLostError:

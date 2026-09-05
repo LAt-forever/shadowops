@@ -56,3 +56,18 @@ class LocalArtifactStore:
             if temporary is not None and temporary.exists():
                 temporary.unlink()
         return StoredArtifact(f"artifact://sha256/{digest}", digest, len(data))
+
+    def get(self, uri: str) -> bytes:
+        prefix = "artifact://sha256/"
+        digest = uri.removeprefix(prefix)
+        if (
+            not uri.startswith(prefix)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("artifact URI is invalid")
+        path = self._root / digest[:2] / digest
+        data = path.read_bytes()
+        if len(data) > self._max_bytes or hashlib.sha256(data).hexdigest() != digest:
+            raise RuntimeError("content-addressed artifact failed integrity validation")
+        return data

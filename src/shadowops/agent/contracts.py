@@ -29,6 +29,10 @@ class ReadOnlyToolName(StrEnum):
     GET_STATIC_FINDINGS = "get_static_findings"
     DESCRIBE_SHADOW_CAPABILITIES = "describe_shadow_capabilities"
     GET_TEST_DATA_PROFILE = "get_test_data_profile"
+    GET_AUDIT_PLAN = "get_audit_plan"
+    GET_STEP_RESULT = "get_step_result"
+    GET_EVIDENCE = "get_evidence"
+    INSPECT_SCHEMA_DIFF = "inspect_schema_diff"
 
 
 ShortStatement = Annotated[str, Field(min_length=1, max_length=500)]
@@ -85,12 +89,16 @@ class PlannerRequestV1(StrictContract):
 
 class ProviderResponseV1(StrictContract):
     text: str
+    response_id: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
 
 
 class AgentInvocationV1(StrictContract):
     id: UUID
     run_id: UUID
-    phase: Literal["PLANNER"] = "PLANNER"
+    phase: Literal["PLANNER", "REPORTER"] = "PLANNER"
     provider: str
     model: str
     prompt_version: str
@@ -101,6 +109,10 @@ class AgentInvocationV1(StrictContract):
     repair_attempts: int = Field(ge=0, le=1)
     error_code: str | None = None
     error_detail: str | None = None
+    provider_response_id: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
     started_at: datetime
     completed_at: datetime
 

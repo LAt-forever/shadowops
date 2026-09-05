@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -22,6 +23,7 @@ class MemoryStore:
         self.runs: dict[UUID, AuditRun] = {}
         self.steps: dict[str, RunStep] = {}
         self.events: dict[UUID, OutboxEvent] = {}
+        self.report_requires_approval = False
 
 
 class MemoryRunRepository:
@@ -144,6 +146,11 @@ class MemoryUnitOfWork:
         self.runs = MemoryRunRepository(store)
         self.steps = MemoryStepRepository(store)
         self.outbox = MemoryOutboxRepository(store)
+        self.risk_reports = SimpleNamespace(
+            get_for_run=lambda run_id: (
+                SimpleNamespace(requires_approval=True) if store.report_requires_approval else None
+            )
+        )
 
     def __enter__(self) -> "MemoryUnitOfWork":
         return self
@@ -362,3 +369,27 @@ def test_fail_fences_step_and_terminates_run_without_next_event() -> None:
     assert step.status is StepStatus.FAILED
     assert step.error_code == "REPOSITORY_NOT_FOUND"
     assert len(store.events) == 1
+
+
+def test_high_risk_report_routes_completion_to_awaiting_approval() -> None:
+    store = _store()
+    store.report_requires_approval = True
+    store.runs[RUN_ID].state = RunState.REPORTING
+    store.runs[RUN_ID].version = 11
+    store.events[EVENT_ID].aggregate_version = 11
+    store.events[EVENT_ID].payload = {
+        "run_id": str(RUN_ID),
+        "expected_state": "REPORTING",
+        "expected_version": 11,
+    }
+    service = _service(store, STARTED_AT, [STEP_ID, FIRST_TOKEN])
+
+    claim = service.claim(EVENT_ID, worker_id="worker-a")
+    assert claim is not None
+    assert claim.to_state is RunState.COMPLETED
+    assert claim.handler_version == "m6.risk-reporting.v1"
+
+    run = service.finalize(claim)
+
+    assert run.state is RunState.AWAITING_APPROVAL
+    assert store.steps[claim.step_key].to_state is RunState.AWAITING_APPROVAL

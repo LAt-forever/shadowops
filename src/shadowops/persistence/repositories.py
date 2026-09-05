@@ -33,11 +33,13 @@ from shadowops.persistence.models import (
     OutboxEventModel,
     RepoSnapshotModel,
     RevisionGraphModel,
+    RiskReportModel,
     RunnerExecutionModel,
     RunStepModel,
     ShadowEnvironmentModel,
     StaticReportModel,
 )
+from shadowops.reporting.contracts import ReportingResultV1, RiskReportV1
 from shadowops.repository.contracts import (
     GitChangeV1,
     RepoSnapshotV1,
@@ -754,6 +756,58 @@ class SqlAlchemyAgentPlanningRepository:
             != result.plan.model_dump(exclude={"id", "created_at"})
         ):
             raise ImmutableResultConflict("audit plan")
+        return existing
+
+
+class SqlAlchemyRiskReportRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_for_run(self, run_id: UUID) -> RiskReportV1 | None:
+        model = self._session.scalar(
+            select(RiskReportModel).where(RiskReportModel.run_id == run_id)
+        )
+        return None if model is None else RiskReportV1.model_validate(model.report)
+
+    def save_result(self, result: ReportingResultV1) -> RiskReportV1:
+        invocation = result.invocation
+        self._session.execute(
+            insert(AgentInvocationModel)
+            .values(**invocation.model_dump(mode="python"))
+            .on_conflict_do_nothing(constraint="uq_agent_run_phase")
+        )
+        for call in result.tool_calls:
+            values = call.model_dump(mode="python", exclude={"observation"})
+            values["observation"] = call.observation.model_dump(mode="json")
+            self._session.execute(
+                insert(AgentToolCallModel)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_agent_tool_call_sequence")
+            )
+        report = result.report
+        self._session.execute(
+            insert(RiskReportModel)
+            .values(
+                id=report.id,
+                run_id=report.run_id,
+                invocation_id=report.invocation_id,
+                schema_version=report.schema_version,
+                input_hash=report.input_hash,
+                report_hash=report.report_hash,
+                final_risk=report.final_risk,
+                requires_approval=report.requires_approval,
+                report=report.model_dump(mode="json"),
+                created_at=report.created_at,
+            )
+            .on_conflict_do_nothing(index_elements=[RiskReportModel.run_id])
+        )
+        existing = self.get_for_run(report.run_id)
+        if existing is None:
+            raise RuntimeError("Risk report upsert did not expose a durable result")
+        if existing.model_dump(exclude={"id", "created_at"}) != report.model_dump(
+            exclude={"id", "created_at"}
+        ):
+            raise ImmutableResultConflict("risk report")
         return existing
 
 

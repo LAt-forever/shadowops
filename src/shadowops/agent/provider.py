@@ -57,7 +57,7 @@ class FakeAgentProvider:
         plan = AuditPlanV1(
             objective=f"Audit migration evidence for run {request.run_id}",
             steps=tuple(steps),
-            coverage_gaps=("M3 plans capabilities but does not execute a shadow database.",),
+            coverage_gaps=("Shadow data does not establish production data distribution.",),
             assumptions=("PostgreSQL 16 is the only declared compatibility profile.",),
         )
         return ProviderResponseV1(
